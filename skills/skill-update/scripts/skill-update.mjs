@@ -11,6 +11,7 @@
 //                       [--path <folder in repo>] [--ref <branch|tag>] [--commit <sha>]
 //   skill-update track <id> --manual [<note>]   never updated by this tool
 //   skill-update track --from-npx [<id>…]       adopt what `npx skills` recorded
+//   skill-update find [<id>…]             find where untracked skills come from [--track] [--no-search]
 //   skill-update untrack <id>
 //   skill-update diff <id>…               the exact text an update would change [--file <path>] [--stat]
 //   skill-update revert <id>…             put back the version before the last update [--dry-run]
@@ -34,6 +35,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as core from "./core.mjs";
 import { detectLang, setLang, t } from "./i18n.mjs";
+import * as origin from "./origin.mjs";
 import { assessRisks } from "./risks.mjs";
 
 const CONFIG_FILE = path.join(core.HOME, "config.json");
@@ -790,6 +792,72 @@ function trackOne(item, source, opts) {
   };
 }
 
+// Repository network checks per skill: candidates found on the machine are
+// cheap and always checked; index results each cost a clone.
+const MAX_SEARCHED = 5;
+
+// For each untracked skill, the repository and commit its files match best.
+// --track records the exact matches; the others wait for the user.
+async function cmdFind(args, opts, config) {
+  const data = gather(opts, config);
+  const items = data.flatMap((d) => d.items);
+  const targets = (args.length ? select(items, args) : items).filter((i) => i.kind === "untracked");
+  const trackedSources = [...new Set(items.filter((i) => i.kind === "tracked").map((i) => i.entry.source))];
+  const results = [];
+  for (const item of targets) {
+    const names = [...new Set([path.basename(item.dir), core.skillName(item.dir)].filter(Boolean))];
+    const local = core.localFiles(item.dir);
+    const candidates = [];
+    const add = (url, via) => url && !candidates.some((c) => c.url === url) && candidates.push({ url, via });
+    if (item.npx) add(item.npx.url, "npx");
+    for (const url of origin.linkedRepos(local)) add(url, "link");
+    for (const url of trackedSources) add(url, "tracked");
+    for (const url of origin.marketplaceRepos(names)) add(url, "marketplace");
+    if (!opts["no-search"] && !opts.offline) {
+      for (const name of names) for (const r of await origin.searchIndex(name)) add(r.url, "skills.sh");
+    }
+    let best = null;
+    let searched = 0;
+    const unchecked = [];
+    for (const c of candidates) {
+      if (c.via === "skills.sh" && searched++ >= MAX_SEARCHED) break;
+      let m = null;
+      try {
+        // Repositories of tracked skills are already in the cache: no fetch.
+        m = origin.verify(c.url, item.dir, local, { fetch: c.via !== "tracked" && !opts.offline });
+      } catch (e) {
+        // A candidate that could not be checked may be the right one: say so.
+        if (c.via !== "tracked") unchecked.push({ url: c.url, error: e.message });
+      }
+      if (m && (!best || origin.rank(m) > origin.rank(best))) best = { ...m, via: c.via };
+      if (best?.exact) break;
+    }
+    results.push({ id: item.id, item, ...(best ? { match: best } : {}), ...(unchecked.length && { unchecked }) });
+  }
+
+  const tracked = [];
+  if (opts.track) {
+    for (const r of results.filter((r) => r.match?.exact)) {
+      tracked.push(trackOne(r.item, r.match.source, { path: r.match.path, commit: r.match.commit, offline: true }).id);
+    }
+    for (const d of new Set(results.filter((r) => tracked.includes(r.id)).map((r) => r.item.rootData))) writeLock(d.root.lock, d.lock);
+  }
+  const out = results.map(({ item, ...r }) => ({ ...r, ...(tracked.includes(r.id) && { tracked: true }) }));
+  if (opts.json) return print({ found: out.filter((r) => r.match), notFound: out.filter((r) => !r.match).map((r) => r.id) });
+  for (const r of out) {
+    if (!r.match) {
+      console.log(`❔ ${t("find.none", { id: r.id })}`);
+      continue;
+    }
+    const m = r.match;
+    console.log(`${m.exact ? "✅" : "🔎"} ${t("find.match", { id: r.id, url: m.source, path: m.path || "/", commit: `${short(m.commit)} (${m.commitDate})` })}`);
+    console.log(`   ${t(m.exact ? "find.exact" : "find.close", { via: t(`find.via.${m.via}`) })} · ${t("track.match", { same: m.same, differ: m.differ, missing: m.missing })}`);
+    if (r.tracked) console.log(`   ${t("find.tracked")}`);
+  }
+  for (const r of out) for (const u of r.unchecked ?? []) console.log(`⚠️  ${t("find.unchecked", { id: r.id, url: u.url, error: u.error })}`);
+  if (out.some((r) => r.match && !r.tracked)) console.log(t("find.hint"));
+}
+
 function cmdUntrack(args, opts, config) {
   if (!args.length) throw new CliError("usage", { usage: "skill-update untrack <id>" });
   const data = gather(opts, config);
@@ -1122,7 +1190,7 @@ function help() {
   console.log(text.slice(1, end).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
 }
 
-function main() {
+async function main() {
   const { command, args, opts } = parseArgs(process.argv.slice(2));
   let config = null;
   try {
@@ -1148,12 +1216,13 @@ function main() {
   }
   if (!opts.json) core.hooks.fetch = (url) => process.stderr.write(`· ${url}\n`);
   const commands = {
-    config: cmdConfig, scan: cmdScan, check: cmdCheck, update: cmdUpdate, track: cmdTrack, untrack: cmdUntrack, diff: cmdDiff, revert: cmdRevert,
-    pin: (a, o, c) => cmdPin(a, o, c, true), unpin: (a, o, c) => cmdPin(a, o, c, false), add: cmdAdd, remind: cmdRemind, plugins: cmdPlugins,
+    config: cmdConfig, scan: cmdScan, check: cmdCheck, update: cmdUpdate, track: cmdTrack, find: cmdFind, untrack: cmdUntrack, diff: cmdDiff,
+    revert: cmdRevert, pin: (a, o, c) => cmdPin(a, o, c, true), unpin: (a, o, c) => cmdPin(a, o, c, false), add: cmdAdd, remind: cmdRemind,
+    plugins: cmdPlugins,
   };
   try {
     if (!commands[command]) throw new CliError("usage", { usage: `skill-update <${Object.keys(commands).join("|")}> (--help)` });
-    commands[command](args, opts, config);
+    await commands[command](args, opts, config);
   } catch (e) {
     if (opts.json) print({ error: e.code ?? "error", message: e.message, ...(e.code === "not-configured" && { defaultRoot: slash(DEFAULT_ROOT), knownRoots: knownRoots() }) });
     else console.error(`❌ ${e.message}`);
@@ -1161,4 +1230,4 @@ function main() {
   }
 }
 
-main();
+await main();

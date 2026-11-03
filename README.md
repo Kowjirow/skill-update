@@ -7,7 +7,7 @@ An agent skill for Claude Code (`/skill-update`) and Codex (`$skill-update`) tha
 Most skills are installed by copying a folder from a repository into `~/.claude/skills/`, a project's `.claude/skills/`, or a personal library organised in sub-folders. Once copied, nothing remembers where they came from, and updating means copying again by hand and redoing your tweaks. `skill-update` fixes that:
 
 - **Any folder, any depth.** You choose the folder on first run: your agent's default (`~/.claude/skills` for Claude Code, `~/.agents/skills` for Codex) or your own. Every folder holding a `SKILL.md` is found, even in sub-folders (`video/brag`) or plugin wrappers.
-- **Knows where each skill comes from.** `track` finds the repository folder and even the exact commit your copy was made from, and records it in a lock file.
+- **Knows where each skill comes from.** `find` looks for the repository of each skill you copied by hand: links in its files, repositories you already track, your Claude Code marketplaces, then the public skills.sh index (only the skill's name is sent; `--no-search` keeps it offline). Every candidate is checked file by file against its history, so it finds the original rather than a fork, and the exact commit your copy was made from. `track` records it in a lock file, or you give the URL yourself.
 - **Keeps your edits.** Updates are three-way merges (`git merge-file`): your local patches survive, a real overlap is reported as a conflict and the skill is left untouched.
 - **Safe.** Shows upstream commits before anything is written, asks before updating, copies every replaced or removed file to a backup folder, never deletes a skill.
 - **A dated log.** Every update is listed in `<date>.md`: the skills, their commits before and after, the files changed and the upstream commit subjects. Put the log folder wherever you keep notes.
@@ -46,6 +46,7 @@ The script also runs on its own:
 ```bash
 node skills/skill-update/scripts/skill-update.mjs config --root claude         # or agents, codex, <folder>
 node skills/skill-update/scripts/skill-update.mjs check
+node skills/skill-update/scripts/skill-update.mjs find --track
 node skills/skill-update/scripts/skill-update.mjs track brag https://github.com/latent-spaces/brag/tree/main/skills/brag
 node skills/skill-update/scripts/skill-update.mjs diff brag
 node skills/skill-update/scripts/skill-update.mjs update --all --dry-run

@@ -7,7 +7,7 @@ Une skill pour Claude Code (`/skill-update`) et Codex (`$skill-update`) qui tien
 La plupart des skills s'installent en copiant un dossier d'un dépôt dans `~/.claude/skills/`, dans le `.claude/skills/` d'un projet, ou dans une bibliothèque personnelle rangée en sous-dossiers. Une fois copiées, plus rien ne dit d'où elles viennent, et les mettre à jour veut dire recopier à la main et refaire ses retouches. `skill-update` règle cela :
 
 - **N'importe quel dossier, à toute profondeur.** Au premier lancement, vous choisissez le dossier : celui de votre agent (`~/.claude/skills` pour Claude Code, `~/.agents/skills` pour Codex), ou le vôtre. Tout dossier qui contient un `SKILL.md` est trouvé, même dans des sous-dossiers (`video/brag`) ou un emballage de plugin.
-- **Sait d'où vient chaque skill.** `track` retrouve le dossier du dépôt, et même le commit exact dont votre copie est tirée, et l'inscrit dans un fichier de suivi.
+- **Sait d'où vient chaque skill.** `find` cherche le dépôt de chaque skill copiée à la main : liens dans ses fichiers, dépôts déjà suivis, places de marché Claude Code de la machine, puis l'annuaire public skills.sh (seul le nom de la skill est envoyé ; `--no-search` reste hors ligne). Chaque candidat est vérifié fichier par fichier dans son historique : il trouve l'original plutôt qu'une copie, et le commit exact dont votre copie est tirée. `track` l'inscrit dans un fichier de suivi, ou vous donnez l'adresse vous-même.
 - **Garde vos retouches.** Une mise à jour est une fusion à trois voies (`git merge-file`) : vos patchs locaux survivent ; un vrai chevauchement est signalé comme conflit et la skill n'est pas touchée.
 - **Prudent.** Montre les commits amont avant d'écrire, demande avant de mettre à jour, copie chaque fichier remplacé ou retiré dans un dossier de sauvegarde, ne supprime jamais une skill.
 - **Un journal daté.** Chaque mise à jour est listée dans `<date>.md` : les skills, leurs commits avant et après, les fichiers changés et les intitulés des commits amont. Le dossier du journal se place où vous rangez vos notes.
@@ -46,6 +46,7 @@ Le script se lance aussi seul :
 ```bash
 node skills/skill-update/scripts/skill-update.mjs config --root claude         # ou agents, codex, <dossier>
 node skills/skill-update/scripts/skill-update.mjs check --lang fr
+node skills/skill-update/scripts/skill-update.mjs find --track
 node skills/skill-update/scripts/skill-update.mjs track brag https://github.com/latent-spaces/brag/tree/main/skills/brag
 node skills/skill-update/scripts/skill-update.mjs diff brag
 node skills/skill-update/scripts/skill-update.mjs update --all --dry-run

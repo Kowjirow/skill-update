@@ -534,6 +534,68 @@ test("remind reports the last full check and refreshes it in the background", ()
   assert.deepEqual(JSON.parse(fs.readFileSync(lastCheck, "utf8")).updates, ["design/demo"]);
 });
 
+test("find recognises a skill from a repository already tracked, and --track records it", () => {
+  const s = sandbox(DEMO);
+  s.copy("skills/demo", "a/demo");
+  s.copy("skills/other", "b/other");
+  s.run(["track", "a/demo", s.upstream]);
+  const found = s.run(["find", "--no-search"]).out;
+  assert.deepEqual(found.notFound, []);
+  const m = found.found[0].match;
+  assert.deepEqual([found.found[0].id, m.path, m.commit, m.exact, m.via], ["b/other", "skills/other", s.c1, true, "tracked"]);
+  s.run(["find", "--no-search", "--track"]);
+  assert.equal(JSON.parse(read(s.root, ".skill-update-lock.json")).skills["b/other"].path, "skills/other");
+  assert.equal(s.skill(s.run(["check"]).out, "b/other").status, "up-to-date");
+});
+
+test("find reports a skill it cannot place", () => {
+  const s = sandbox(DEMO);
+  write(s.root, { "mine/SKILL.md": "---\nname: mine\n---\nwritten by hand\n" });
+  assert.deepEqual(s.run(["find", "--no-search"]).out.notFound, ["mine"]);
+});
+
+test("find searches the skills index by name, original before forks", async () => {
+  const s = sandbox(DEMO);
+  s.copy("skills/demo", "demo");
+  const fork = path.join(s.dir, "fork");
+  git(s.dir, "clone", "-q", s.upstream, fork);
+  const queries = [];
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    const q = new URL(req.url, "http://x").searchParams.get("q");
+    queries.push(q);
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ skills: [
+      { skillId: q, name: q, source: fork, installs: 3 },
+      { skillId: q, name: q, source: s.upstream, installs: 900 },
+      { skillId: "something-else", name: "something-else", source: fork, installs: 1 },
+    ] }));
+  });
+  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+  const { spawn } = await import("node:child_process");
+  const out = await new Promise((ok) => {
+    const child = spawn(process.execPath, [SCRIPT, "find", "--json", "--root", s.root], {
+      env: { ...process.env, SKILL_UPDATE_HOME: s.home, CLAUDE_CONFIG_DIR: s.claude, SKILL_UPDATE_SEARCH_URL: `http://127.0.0.1:${server.address().port}/api/search` },
+    });
+    let text = "";
+    child.stdout.on("data", (d) => (text += d));
+    child.on("close", () => ok(JSON.parse(text)));
+  });
+  server.close();
+  assert.deepEqual(queries, ["demo"]);
+  const m = out.found[0].match;
+  assert.deepEqual([m.source, m.via, m.exact], [s.upstream, "skills.sh", true]);
+});
+
+test("track picks the version whose text is closest when the copy was edited", () => {
+  const s = sandbox(DEMO);
+  const c2 = s.commit({ "skills/demo/SKILL.md": DEMO["skills/demo/SKILL.md"].replace("Line two.", "Line two, rewritten.\nA new line."), "skills/demo/extra.md": "extra\n" });
+  s.copy("skills/demo", "demo");
+  fs.rmSync(path.join(s.root, "demo", "extra.md"));
+  write(s.root, { "demo/SKILL.md": `${read(s.root, "demo/SKILL.md")}My own section.\n` });
+  assert.equal(s.run(["track", "demo", s.upstream]).out.tracked[0].commit, c2);
+});
+
 test("messages follow --lang", () => {
   const s = tracked();
   const fr = s.run(["check", "--lang", "fr"], { json: false });

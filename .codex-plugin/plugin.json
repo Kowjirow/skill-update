@@ -1,6 +1,6 @@
 {
   "name": "skill-update",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups, a lock file of origins and a dated log of each update.",
   "author": { "name": "Guillaume" },
   "license": "MIT",

@@ -31,7 +31,8 @@ export const HOME = stateDir();
 export class GitError extends Error {}
 
 export function git(args, { cwd, input, buffer = false, allowFail = false } = {}) {
-  const r = spawnSync("git", args, {
+  // Long cache paths (deep home folders on Windows) break pack files without it.
+  const r = spawnSync("git", ["-c", "core.longpaths=true", ...args], {
     cwd,
     input,
     encoding: buffer ? "buffer" : "utf8",
@@ -451,28 +452,44 @@ export function findSkillPath(repo, commit, skillDir) {
   return { candidates: byDir.length ? byDir : candidates };
 }
 
-const better = (a, b) => {
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return false;
-};
+// Lines of `local` also found in `blob`: how close two versions of a file are.
+function overlap(local, blob) {
+  if (!blob || isBinary(local) || isBinary(blob)) return 0;
+  const theirs = new Set(blob.toString("utf8").split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
+  return local.toString("utf8").split(/\r?\n/).filter((l) => l.trim() && theirs.has(l.trim())).length;
+}
 
 // The commit whose files match the local copy best: most identical files,
-// then fewest different ones, then fewest missing; newest on a tie.
+// then fewest different ones; when files differ in every candidate (the
+// user's edits), the version whose text is closest; then fewest missing
+// (files added upstream after the copy); newest on a tie.
 export function bestCommit(repo, head, sub, local, max = 500) {
   const commits = gitOut(["rev-list", `--max-count=${max}`, head, ...pathspec([sub])], { cwd: repo.dir }).split("\n").filter(Boolean);
-  let best = null;
-  for (const commit of commits) {
-    let same = 0, differ = 0, missing = 0;
+  const stats = commits.map((commit) => {
+    const s = { commit, same: 0, differ: 0, missing: 0, differing: [] };
     for (const [rel, e] of listTree(repo, commit, sub)) {
       const l = local.get(rel);
-      if (!l) missing++;
-      else if (l.is(e.oid)) same++;
-      else differ++;
+      if (!l) s.missing++;
+      else if (l.is(e.oid)) s.same++;
+      else {
+        s.differ++;
+        s.differing.push([rel, e.oid]);
+      }
     }
-    const key = [same, -differ, -missing];
-    if (!best || better(key, best.key)) best = { commit, key, same, differ, missing };
+    return s;
+  });
+  if (!stats.length) return null;
+  const keep = (pool, score) => {
+    const top = Math.max(...pool.map(score));
+    return pool.filter((s) => score(s) === top);
+  };
+  let pool = keep(keep(stats, (s) => s.same), (s) => -s.differ);
+  if (pool.length > 1 && pool[0].differ > 0) {
+    const blobs = readBlobs(repo, [...new Set(pool.flatMap((s) => s.differing.map(([, oid]) => oid)))].slice(0, 40));
+    pool = keep(pool, (s) => s.differing.reduce((n, [rel, oid]) => n + overlap(local.get(rel).buf, blobs.get(oid)), 0));
   }
-  return best;
+  const { commit, same, differ, missing } = keep(pool, (s) => -s.missing)[0];
+  return { commit, same, differ, missing };
 }
 
 // Local files absent from the skill folder upstream but present higher up in

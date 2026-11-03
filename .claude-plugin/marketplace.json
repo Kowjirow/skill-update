@@ -5,7 +5,7 @@
     {
       "name": "skill-update",
       "source": "./",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups and a lock file of origins."
     }
   ]
