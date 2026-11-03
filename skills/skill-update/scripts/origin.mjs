@@ -55,10 +55,12 @@ const sourceUrl = (source) => {
 };
 
 // Repositories that publish a skill of exactly this name on skills.sh, most
-// installed first (the original before its forks). Only the name is sent.
-export async function searchIndex(name) {
+// installed first (the original before its forks). Only the name is sent,
+// with an owner when the skill's own links name one.
+export async function searchIndex(name, owner) {
   try {
-    const res = await fetch(`${SEARCH}?${new URLSearchParams({ q: name, limit: "20" })}`, {
+    const params = new URLSearchParams({ q: name, limit: "20", ...(owner && { owner: owner.toLowerCase() }) });
+    const res = await fetch(`${SEARCH}?${params}`, {
       headers: { "User-Agent": "skill-update" },
       signal: AbortSignal.timeout(10000),
     });

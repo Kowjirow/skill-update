@@ -805,16 +805,24 @@ async function cmdFind(args, opts, config) {
   const trackedSources = [...new Set(items.filter((i) => i.kind === "tracked").map((i) => i.entry.source))];
   const results = [];
   for (const item of targets) {
-    const names = [...new Set([path.basename(item.dir), core.skillName(item.dir)].filter(Boolean))];
+    // The name declared in SKILL.md is the one indexes know; the folder may be renamed.
+    const names = [...new Set([core.skillName(item.dir), path.basename(item.dir)].filter(Boolean))];
     const local = core.localFiles(item.dir);
+    const links = origin.linkedRepos(local);
     const candidates = [];
     const add = (url, via) => url && !candidates.some((c) => c.url === url) && candidates.push({ url, via });
     if (item.npx) add(item.npx.url, "npx");
-    for (const url of origin.linkedRepos(local)) add(url, "link");
+    for (const url of links) add(url, "link");
     for (const url of trackedSources) add(url, "tracked");
     for (const url of origin.marketplaceRepos(names)) add(url, "marketplace");
     if (!opts["no-search"] && !opts.offline) {
-      for (const name of names) for (const r of await origin.searchIndex(name)) add(r.url, "skills.sh");
+      const owners = [...new Set(links.map((u) => u.split("/")[3]))].slice(0, 3);
+      const hits = [];
+      for (const name of names) {
+        hits.push(...(await origin.searchIndex(name)));
+        for (const owner of owners) hits.push(...(await origin.searchIndex(name, owner)));
+      }
+      for (const h of hits.sort((a, b) => (b.installs ?? 0) - (a.installs ?? 0))) add(h.url, "skills.sh");
     }
     let best = null;
     let searched = 0;
