@@ -2,86 +2,120 @@
 
 [English](README.md)
 
-Une skill pour Claude Code (`/skill-update`) et Codex (`$skill-update`) qui tient à jour les skills que vous avez **copiées depuis GitHub**, dans n'importe quel dossier, sans perdre vos propres retouches.
-
-La plupart des skills s'installent en copiant un dossier d'un dépôt dans `~/.claude/skills/`, dans le `.claude/skills/` d'un projet, ou dans une bibliothèque personnelle rangée en sous-dossiers. Une fois copiées, plus rien ne dit d'où elles viennent, et les mettre à jour veut dire recopier à la main et refaire ses retouches. `skill-update` règle cela :
-
-- **N'importe quel dossier, à toute profondeur.** Au premier lancement, vous choisissez le dossier : celui de votre agent (`~/.claude/skills` pour Claude Code, `~/.agents/skills` pour Codex), ou le vôtre. Tout dossier qui contient un `SKILL.md` est trouvé, même dans des sous-dossiers (`video/brag`) ou un emballage de plugin.
-- **Sait d'où vient chaque skill.** `find` cherche le dépôt de chaque skill copiée à la main : liens dans ses fichiers, dépôts déjà suivis, places de marché Claude Code de la machine, puis l'annuaire public skills.sh (seul le nom de la skill est envoyé ; `--no-search` reste hors ligne). Chaque candidat est vérifié fichier par fichier dans son historique : il trouve l'original plutôt qu'une copie, et le commit exact dont votre copie est tirée. `track` l'inscrit dans un fichier de suivi, ou vous donnez l'adresse vous-même.
-- **Garde vos retouches.** Une mise à jour est une fusion à trois voies (`git merge-file`) : vos patchs locaux survivent ; un vrai chevauchement est signalé comme conflit et la skill n'est pas touchée.
-- **Prudent.** Montre les commits amont avant d'écrire, demande avant de mettre à jour, copie chaque fichier remplacé ou retiré dans un dossier de sauvegarde, ne supprime jamais une skill.
-- **Un journal daté.** Chaque mise à jour est listée dans `<date>.md` : les skills, leurs commits avant et après, les fichiers changés et les intitulés des commits amont. Le dossier du journal se place où vous rangez vos notes.
-- **Signale ce qui mérite un regard.** Les scripts d'une skill tournent avec les droits de votre agent. Avant que vous acceptiez, il relève les nouveaux scripts, les lignes qui exécutent du code téléchargé (`curl … | sh`), les outils nouvellement pré-autorisés, la configuration de hooks et les changements de licence ; `diff` montre le texte exact.
-- **Annuler, figer, ajouter.** `revert` remet la version d'avant la dernière mise à jour ; `pin` garde une skill où elle est ; `add` copie une nouvelle skill depuis GitHub, avec sa licence, et la suit en une seule commande.
-- **Un rappel.** `remind` affiche une ligne quand des mises à jour attendent, d'après la dernière vérification, et la refait en arrière-plan une fois par semaine. Dans Claude Code, il peut tourner à l'ouverture de chaque session.
-- **Ni API, ni jeton, ni quota.** Il passe directement par git (clones nus et partiels en cache) : GitHub, GitLab, tout hébergeur git ou un dossier local, quelle que soit la branche par défaut.
-- **Le reste aussi.** Adopte les skills installées par `npx skills`, fait avancer les skills qui sont des clones git, et liste les plugins Claude Code en retard sur leur place de marché avec la commande pour les mettre à jour.
-- **Messages en français et en anglais**, selon la langue du système ou `--lang`.
-
-Prérequis : Node.js 18+ et git. Aucune dépendance.
+Une skill d'agent — pour Claude Code, Codex et tout agent qui lit `SKILL.md` — qui **tient à jour les skills que vous avez copiées depuis GitHub**, dans n'importe quel dossier, sans perdre vos propres retouches. Elle retrouve d'où vient chaque skill, montre ce qui a changé en amont et ce qui mérite un regard, fusionne la mise à jour avec vos changements, sauvegarde chaque fichier qu'elle remplace et tient un journal daté de chaque mise à jour.
 
 ## Installer
 
-**Claude Code**, comme plugin :
+### Claude Code — comme plugin (recommandé)
 
 ```
 /plugin marketplace add <owner>/skill-update
 /plugin install skill-update@skill-update
 ```
 
-ou à la main : copier `skills/skill-update/` dans `~/.claude/skills/`.
+Puis taper `/skill-update`, ou simplement demander de mettre à jour vos skills.
 
-**Codex** : copier `skills/skill-update/` dans `~/.agents/skills/` (ou dans le `.agents/skills/` d'un projet). Le dépôt porte aussi un manifeste de plugin Codex, `.codex-plugin/plugin.json`, et `agents/openai.yaml` donne à Codex le nom affiché de la skill.
+### Codex et autres agents — avec la CLI skills
 
-**Tout agent**, avec la CLI skills : `npx skills add <owner>/skill-update`.
-
-## Utiliser
-
-Taper `/skill-update` dans Claude Code ou `$skill-update` dans Codex, ou demander « mets à jour mes skills ». La skill demande votre dossier de skills la première fois, vérifie chaque skill, montre ce qui a changé et met à jour ce que vous acceptez.
-
-Ajouter une sous-commande, en anglais, pour aller droit à une action : `/skill-update check`, `/skill-update diff brag`, `/skill-update revert brag`, `/skill-update pin brag`, `/skill-update add <url>`, `/skill-update remind`… (`$skill-update …` dans Codex). La liste complète est en tête du [SKILL.md](skills/skill-update/SKILL.md). Claude Code et Codex partagent la même configuration : un dossier utilisé par les deux n'est suivi qu'une fois.
-
-Le script se lance aussi seul :
+Avec la [CLI skills de Vercel](https://github.com/vercel-labs/skills), qui installe dans Codex, Claude Code, Cursor et plus de 20 autres agents :
 
 ```bash
-node skills/skill-update/scripts/skill-update.mjs config --root claude         # ou agents, codex, <dossier>
+npx skills add <owner>/skill-update            # choisir le ou les agents à l'invite
+npx skills add <owner>/skill-update -a codex   # ou viser Codex directement
+```
+
+Dans Codex, l'appeler par `$skill-update` (ou `/skills` pour parcourir), ou simplement demander de mettre à jour vos skills.
+
+### À la main (skill à déposer)
+
+Copier le dossier de la skill dans le dossier de skills de votre agent :
+
+```bash
+git clone https://github.com/<owner>/skill-update
+cp -R skill-update/skills/skill-update ~/.claude/skills/   # Claude Code
+cp -R skill-update/skills/skill-update ~/.agents/skills/   # Codex (anciennes installations : ~/.codex/skills/)
+```
+
+## Prérequis
+
+- **Node.js 18+** — le script de la skill n'utilise rien d'autre de npm : aucune dépendance.
+- **git** — chaque dépôt est lu avec git : ni API GitHub, ni jeton, ni quota, et tout hébergeur git convient (GitHub, GitLab, auto-hébergé, dossier local).
+- **Accès réseau** aux dépôts d'où viennent vos skills, et à [skills.sh](https://skills.sh) pour `find` (facultatif : `--no-search`).
+- Windows, macOS ou Linux.
+
+## Ce qu'elle fait
+
+La plupart des skills s'installent en copiant un dossier d'un dépôt dans `~/.claude/skills/`, dans le dossier de skills d'un projet, ou dans une bibliothèque personnelle rangée en sous-dossiers. Une fois copiées, plus rien ne dit d'où elles viennent, et les mettre à jour veut dire recopier à la main et refaire ses retouches. Quand on l'appelle, la skill :
+
+1. **Demande où sont vos skills** — la première fois seulement : le dossier par défaut de votre agent (`~/.claude/skills`, `~/.agents/skills`) ou celui que vous choisissez. Les sous-dossiers conviennent : tout dossier qui contient un `SKILL.md` est une skill, à toute profondeur.
+2. **Retrouve d'où vient chaque skill** — par les liens de ses fichiers, les dépôts déjà suivis, vos places de marché Claude Code, puis l'annuaire public skills.sh. Chaque candidat est vérifié fichier par fichier dans son historique git : elle trouve l'original plutôt qu'une copie, et le commit exact dont votre copie est tirée. Elle l'inscrit dans un fichier de suivi ; vous ne donnez une adresse que si elle ne peut pas trancher.
+3. **Regarde ce qui a changé** — des deux côtés : en amont depuis votre copie, et vos propres retouches. Elle compare les empreintes git des fichiers : rien n'est téléchargé pour décider, et les fins de ligne ne comptent pas comme un changement.
+4. **Signale ce qui mérite un regard** — les scripts d'une skill tournent avec les droits de votre agent ; avant que vous acceptiez, elle relève les nouveaux scripts, les lignes qui exécutent du code téléchargé (`curl https://… | sh`), les outils nouvellement pré-autorisés, la configuration de hooks et les changements de licence, et montre le diff exact sur demande.
+5. **Met à jour, avec votre accord** — par une fusion à trois voies : l'amont est pris là où vous n'avez rien touché, fusionné là où vous avez tous deux modifié, et un vrai chevauchement est signalé comme conflit, la skill restant intacte. Chaque fichier remplacé ou retiré est d'abord sauvegardé, et chaque mise à jour est listée dans un journal Markdown daté.
+
+## Ce que contient la skill
+
+```
+skills/skill-update/
+├── SKILL.md                  la procédure, les sous-commandes et les règles que suit l'agent
+├── agents/openai.yaml        nom affiché et invite par défaut pour Codex
+├── references/lockfile.md    formats : fichier de suivi, configuration, journal, risques, rapport
+└── scripts/
+    ├── skill-update.mjs      la ligne de commande derrière chaque sous-commande
+    ├── core.mjs              accès git, empreintes des fichiers, plan et fusion à trois voies
+    ├── origin.mjs            retrouver le dépôt d'où vient une skill copiée
+    ├── risks.mjs             ce qu'une mise à jour apporte qui mérite un regard
+    └── i18n.mjs              messages en anglais et en français
+```
+
+Le dépôt porte aussi `.claude-plugin/` (plugin et place de marché Claude Code), `.codex-plugin/plugin.json` (plugin Codex) et les tests (`node --test`).
+
+### Sous-commandes
+
+Une sous-commande, en anglais, après le nom de la skill va droit à une action : `/skill-update revert brag` dans Claude Code, `$skill-update revert brag` dans Codex. Taper une sous-commande vaut accord pour cette action ; un risque élevé est toujours montré d'abord et redemandé.
+
+| Sous-commande | Ce qu'elle fait |
+| --- | --- |
+| *(aucune)* | Déroulé complet : vérifier chaque skill, montrer ce qui a changé et ses risques, demander, mettre à jour. |
+| `check [skill…]` | Vérifier seulement : ce qui a changé en amont, vos retouches, ce qu'il faut regarder. Ne modifie rien. |
+| `update [skill…]` | Mettre à jour les skills nommées (ou demander lesquelles), avec fusion, sauvegardes, suivi et journal. |
+| `diff <skill>` | Montrer le texte exact qu'une mise à jour changerait, fichier par fichier. |
+| `revert <skill>` | Remettre la version d'avant la dernière mise à jour ; relancer pour remonter plus loin. Annule aussi un `add`. |
+| `pin <skill> [pourquoi]` | Figer une skill à sa version (projet client, état sûr) ; `check` dit toujours ce qui attend. |
+| `unpin <skill>` | Laisser de nouveau se mettre à jour une skill figée. |
+| `add <url> [dossier]` | Copier une nouvelle skill depuis un dépôt, avec sa licence, et la suivre. Montre d'abord les fichiers et les risques. |
+| `find [skill…]` | Retrouver d'où viennent les skills non suivies ; les correspondances exactes se suivent d'un coup. |
+| `track <skill> <url>` | Inscrire d'où vient une skill copiée (le dossier et le commit sont trouvés pour vous). |
+| `untrack <skill>` | Ne plus suivre une skill ; ses fichiers restent. |
+| `scan` | Lister les skills trouvées et comment chacune est suivie, sans réseau. |
+| `remind` | Une ligne quand des mises à jour attendent, d'après la dernière vérification ; peut tourner à chaque ouverture de session. |
+| `plugins` | Plugins Claude Code en retard sur leur place de marché, avec la commande pour les mettre à jour. |
+| `config [dossier]` | Voir ou changer le ou les dossiers de skills, le dossier du journal et la commande d'après mise à jour. |
+
+Le script se lance aussi seul, avec les mêmes sous-commandes :
+
+```bash
 node skills/skill-update/scripts/skill-update.mjs check --lang fr
-node skills/skill-update/scripts/skill-update.mjs find --track
-node skills/skill-update/scripts/skill-update.mjs track brag https://github.com/latent-spaces/brag/tree/main/skills/brag
-node skills/skill-update/scripts/skill-update.mjs diff brag
 node skills/skill-update/scripts/skill-update.mjs update --all --dry-run
-node skills/skill-update/scripts/skill-update.mjs update --all
-node skills/skill-update/scripts/skill-update.mjs revert brag
-node skills/skill-update/scripts/skill-update.mjs pin brag --note "projet client"
-node skills/skill-update/scripts/skill-update.mjs add https://github.com/anthropics/skills/tree/main/skills/canvas-design --to design --dry-run
-node skills/skill-update/scripts/skill-update.mjs remind
-node skills/skill-update/scripts/skill-update.mjs plugins
+node skills/skill-update/scripts/skill-update.mjs find --track
 ```
 
-Rappel à l'ouverture de chaque session Claude Code, dans `~/.claude/settings.json` :
+Options communes : `--json` (sortie lisible par une machine), `--dry-run` (n'écrit rien), `--lang en|fr`, `--offline` (sans réseau), `--root <dossier>` (un seul dossier), `--help`.
 
-```json
-{ "hooks": { "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"<chemin>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }] }] } }
-```
+## Notes
 
-`--json` donne une sortie lisible par une machine, sur toutes les commandes. `--help` liste les options.
+- **Rien n'est supprimé.** Les fichiers qu'une mise à jour remplace ou retire sont d'abord copiés dans `~/.claude/skill-update/backups/` (`~/.agents/skill-update/` sans Claude Code) ; `revert` s'en sert. Une skill en conflit n'est pas touchée du tout.
+- **Confidentialité.** `find` n'envoie que le nom de la skill à l'annuaire skills.sh ; `--no-search` s'en tient à ce que votre machine sait déjà. Rien d'autre ne quitte votre machine, hormis les récupérations git.
+- **Relire avant d'accepter.** Les signalements de risque invitent à regarder, ce ne sont pas des verdicts : une mise à jour peut apporter des instructions dont vous ne voulez pas. `diff` montre les lignes.
+- **Bac à sable de Codex.** `check`, `update` et `find` ont besoin du réseau et d'écrire hors du projet ; les autoriser quand le bac à sable le demande.
+- **Le journal** va par défaut dans `~/.claude/skill-update/logs/<date>.md` ; `config --log-dir` le place dans vos notes. Une commande `afterUpdate`, facultative, reçoit chaque rapport de mise à jour en JSON, pour tenir un registre ou commiter un coffre de notes.
+- **Rappel à l'ouverture de session** dans Claude Code — à ajouter aux hooks `SessionStart` de `~/.claude/settings.json` :
 
-## Fonctionnement
-
-Pour chaque skill suivie, le fichier de suivi garde la source, le dossier dans le dépôt et le commit auquel la copie correspond. `check` récupère la source et compare trois versions de chaque fichier par leur empreinte git : le commit enregistré (base), la tête actuelle (amont) et votre copie (local). Les fins de ligne ne comptent pas comme un changement. `update` prend ensuite l'amont là où vous n'avez rien touché, fusionne là où vous avez tous deux modifié, et met en sauvegarde ce que l'amont a supprimé. Détails : [references/lockfile.md](skills/skill-update/references/lockfile.md).
-
-Chaque mise à jour ajoute une section à `<dossier du journal>/<AAAA-MM-JJ>.md` (`config --log-dir <dossier>`, par défaut `~/.claude/skill-update/logs`). Une commande `afterUpdate`, facultative, reçoit le rapport de mise à jour en JSON : pour tenir un registre ou commiter.
-
-## Tests
-
-```bash
-node --test
-```
-
-## Remerciements
-
-Inspiré de [yizhiyanhua-ai/skills-updater](https://github.com/yizhiyanhua-ai/skills-updater), qui vérifie les installations par plugin et par `npx skills`. `skill-update` ajoute ce qu'il laisse de côté : les skills copiées à la main dans n'importe quel dossier, de vraies fusions à trois voies, et git au lieu de l'API GitHub.
+  ```json
+  { "type": "command", "command": "node \"<chemin>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }
+  ```
+- Inspiré de [yizhiyanhua-ai/skills-updater](https://github.com/yizhiyanhua-ai/skills-updater), qui vérifie les installations par plugin et par `npx skills` ; skill-update ajoute les skills copiées à la main dans n'importe quel dossier, les fusions à trois voies, les signalements de risque, et git au lieu de l'API GitHub.
 
 ## Licence
 
-MIT
+MIT — voir [LICENSE](LICENSE).
