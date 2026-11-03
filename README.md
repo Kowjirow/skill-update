@@ -114,7 +114,6 @@ Common options: `--json` (machine-readable output), `--dry-run` (write nothing),
   ```json
   { "type": "command", "command": "node \"<path>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }
   ```
-- Inspired by [yizhiyanhua-ai/skills-updater](https://github.com/yizhiyanhua-ai/skills-updater), which checks plugin and `npx skills` installs; skill-update adds skills copied by hand into any folder, three-way merges, risk flags and git instead of the GitHub API.
 
 ## License
 
