@@ -3,6 +3,7 @@ name: skill-update
 description: Update the skills a user copied from GitHub or any git repository into a skills folder (~/.claude/skills, ~/.agents/skills, a project's skills folder, or any folder, sub-folders included). Checks what changed upstream and flags risky changes (new scripts, code downloaded and run, pre-approved tools), shows the exact diff, merges updates with the user's own edits (three-way merge), backs up every replaced file, can undo an update, pin a skill or add a new one, records where each skill comes from and writes a dated log of each update. Also adopts skills installed by `npx skills`, fast-forwards skills that are git clones, and reports Claude Code plugins behind their marketplace. Use when the user asks to update, upgrade, refresh or check their skills, to undo, pin or add a skill, runs /skill-update or $skill-update, or wants to record where a skill comes from.
 license: MIT
 compatibility: Requires Node.js 18+ and git, and network access to the skills' repositories. Works in Claude Code, Codex and other agents that read SKILL.md.
+argument-hint: "[check|update|diff|revert|pin|unpin|add|track|remind|plugins|config] [skill or URL]"
 ---
 
 # Skill Update
@@ -18,6 +19,30 @@ node "<this skill's folder>/scripts/skill-update.mjs"
 Always add `--json` and read the JSON: the human output is for terminals. Speak to the user in their language; add `--lang fr` (or `en`) when they want the script's own messages in it.
 
 **Asking the user.** Where this file says *ask*, use the agent's question tool when it has one (AskUserQuestion in Claude Code), otherwise ask in the chat and wait for the answer. Never pick for the user.
+
+## Subcommands
+
+The words typed after the skill name (`/skill-update revert brag` in Claude Code, `$skill-update revert brag` in Codex) choose what to do: the first word is the subcommand, the rest are its arguments. Step 1 (the skills folder) comes first whatever the subcommand.
+
+| Typed | Does | Steps |
+| --- | --- | --- |
+| *(nothing)* | full run: check, show, ask, update | 2, 4, 5 |
+| `check [skill…]` | check only, change nothing | 2 |
+| `update [skill…]` | update the named skills, or ask which ones | 4, 5 |
+| `diff <skill>` | show the exact text an update would change | 2 |
+| `revert <skill>` | put back the version before the last update | 6 |
+| `pin <skill> [why]` | keep a skill at its version | 6 |
+| `unpin <skill>` | let a pinned skill update again | 6 |
+| `add <url> [folder]` | copy a new skill from a repository and track it | 7 |
+| `track <skill> <url>` | record where a copied skill comes from | 3 |
+| `untrack <skill>` | stop tracking a skill (its files stay) | 3 |
+| `scan` | list the skills and how each is tracked, offline | 2 |
+| `remind` | one line if updates wait | 8 |
+| `plugins` | Claude Code plugins behind their marketplace | 9 |
+| `config [folder]` | show or change the skills folder | 1 |
+| anything else | read it as a request in plain words, or show this table | |
+
+A subcommand the user typed is their consent for that action on the skills they named: run it without asking again. Two exceptions: a `high` risk (step 2) is always shown first and needs a second yes, and `update` with no skill named still asks which ones (step 4). `add` runs its dry run first and shows it, then adds.
 
 ## 1. Know the skills folder
 

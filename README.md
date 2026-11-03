@@ -37,7 +37,9 @@ or by hand: copy `skills/skill-update/` into `~/.claude/skills/`.
 
 ## Use
 
-Type `/skill-update` in Claude Code or `$skill-update` in Codex, or ask "update my skills". The skill asks for your skills folder the first time, checks every skill, shows what changed, and updates what you approve. Claude Code and Codex share one configuration, so a folder used by both is tracked once.
+Type `/skill-update` in Claude Code or `$skill-update` in Codex, or ask "update my skills". The skill asks for your skills folder the first time, checks every skill, shows what changed, and updates what you approve.
+
+Add a subcommand to go straight to one action: `/skill-update check`, `/skill-update diff brag`, `/skill-update revert brag`, `/skill-update pin brag`, `/skill-update add <url>`, `/skill-update remind`… (`$skill-update …` in Codex). The full list is at the top of [SKILL.md](skills/skill-update/SKILL.md). Claude Code and Codex share one configuration, so a folder used by both is tracked once.
 
 The script also runs on its own:
 

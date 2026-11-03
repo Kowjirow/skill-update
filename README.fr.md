@@ -37,7 +37,9 @@ ou à la main : copier `skills/skill-update/` dans `~/.claude/skills/`.
 
 ## Utiliser
 
-Taper `/skill-update` dans Claude Code ou `$skill-update` dans Codex, ou demander « mets à jour mes skills ». La skill demande votre dossier de skills la première fois, vérifie chaque skill, montre ce qui a changé et met à jour ce que vous acceptez. Claude Code et Codex partagent la même configuration : un dossier utilisé par les deux n'est suivi qu'une fois.
+Taper `/skill-update` dans Claude Code ou `$skill-update` dans Codex, ou demander « mets à jour mes skills ». La skill demande votre dossier de skills la première fois, vérifie chaque skill, montre ce qui a changé et met à jour ce que vous acceptez.
+
+Ajouter une sous-commande, en anglais, pour aller droit à une action : `/skill-update check`, `/skill-update diff brag`, `/skill-update revert brag`, `/skill-update pin brag`, `/skill-update add <url>`, `/skill-update remind`… (`$skill-update …` dans Codex). La liste complète est en tête du [SKILL.md](skills/skill-update/SKILL.md). Claude Code et Codex partagent la même configuration : un dossier utilisé par les deux n'est suivi qu'une fois.
 
 Le script se lance aussi seul :
 

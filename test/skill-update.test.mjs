@@ -379,6 +379,17 @@ test("Codex: the skill follows the Agent Skills spec and ships its Codex files",
   assert.equal(codex.version, claude.version);
 });
 
+test("SKILL.md lists every command of the script as a subcommand", () => {
+  const repo = fileURLToPath(new URL("..", import.meta.url));
+  const skill = fs.readFileSync(path.join(repo, "skills", "skill-update", "SKILL.md"), "utf8");
+  const script = fs.readFileSync(path.join(repo, "skills", "skill-update", "scripts", "skill-update.mjs"), "utf8");
+  const commands = [...script.match(/const commands = \{([\s\S]*?)\};/)[1].matchAll(/(\w+):/g)].map((m) => m[1]);
+  const section = skill.slice(skill.indexOf("## Subcommands"), skill.indexOf("## 1."));
+  const listed = [...section.matchAll(/^\| `(\w+)/gm)].map((m) => m[1]);
+  assert.deepEqual([...commands].sort(), [...listed].sort());
+  assert.match(skill, /^argument-hint: ".+"$/m);
+});
+
 test("config knows each agent's folder; without Claude Code, state goes to ~/.agents", () => {
   const s = sandbox(DEMO);
   const user = path.join(s.dir, "user");
