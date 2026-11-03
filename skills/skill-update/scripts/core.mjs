@@ -85,11 +85,18 @@ export function openRepo(url, { fetch = true } = {}) {
   return repo;
 }
 
+const commits = new Map();
+
 export function resolveCommit(repo, ref) {
+  const key = `${repo.dir}\0${ref ?? "HEAD"}`;
+  if (commits.has(key)) return commits.get(key);
   const candidates = !ref || ref === "HEAD" ? ["HEAD"] : [`refs/heads/${ref}`, `refs/tags/${ref}`, ref];
   for (const c of candidates) {
     const r = git(["rev-parse", "--verify", "--quiet", `${c}^{commit}`], { cwd: repo.dir, allowFail: true });
-    if (r.status === 0) return r.stdout.trim();
+    if (r.status === 0) {
+      commits.set(key, r.stdout.trim());
+      return commits.get(key);
+    }
   }
   return null;
 }
@@ -114,27 +121,32 @@ export function splitRefPath(repo, refPath) {
   return { ref: segs[0], path: segs.slice(1).join("/") };
 }
 
+// Every file of a commit, read once: skills of the same repository and commit
+// (66 design systems from one repository) share it. A few trees are kept.
+const trees = new Map();
+
+function fullTree(repo, commit) {
+  const key = `${repo.dir}\0${commit}`;
+  let entries = trees.get(key);
+  if (entries) trees.delete(key);
+  else entries = parseLsTree(git(["ls-tree", "-r", "-z", "--full-tree", commit], { cwd: repo.dir }).stdout);
+  trees.set(key, entries);
+  if (trees.size > 8) trees.delete(trees.keys().next().value);
+  return entries;
+}
+
 // Files under `sub` at `commit`, keyed by their path relative to `sub`.
 export function listTree(repo, commit, sub = "") {
-  const args = ["ls-tree", "-r", "-z", "--full-tree", commit];
-  if (sub) args.push("--", sub);
   const prefix = sub ? `${sub}/` : "";
   const map = new Map();
-  for (const e of parseLsTree(git(args, { cwd: repo.dir }).stdout)) {
-    if (prefix && !e.path.startsWith(prefix)) continue;
-    map.set(e.path.slice(prefix.length), e);
-  }
+  for (const e of fullTree(repo, commit)) if (e.path.startsWith(prefix)) map.set(e.path.slice(prefix.length), e);
   return map;
 }
 
 // Entries for exact paths (any depth), keyed by full path.
 export function listPaths(repo, commit, paths) {
-  const map = new Map();
-  for (let i = 0; i < paths.length; i += 200) {
-    const out = git(["ls-tree", "-r", "-z", "--full-tree", commit, "--", ...paths.slice(i, i + 200)], { cwd: repo.dir }).stdout;
-    for (const e of parseLsTree(out)) map.set(e.path, e);
-  }
-  return map;
+  const wanted = new Set(paths);
+  return new Map(fullTree(repo, commit).filter((e) => wanted.has(e.path)).map((e) => [e.path, e]));
 }
 
 function parseLsTree(out) {
@@ -394,9 +406,8 @@ export function merge3(localBuf, baseBuf, remoteBuf) {
 // --- Finding where a copied skill came from ------------------------------------------
 
 export function skillPaths(repo, commit) {
-  const out = gitOut(["ls-tree", "-r", "-z", "--name-only", "--full-tree", commit], { cwd: repo.dir });
-  return out
-    .split("\0")
+  return fullTree(repo, commit)
+    .map((e) => e.path)
     .filter((p) => p === "SKILL.md" || p.endsWith("/SKILL.md"))
     .map((p) => p.slice(0, -"SKILL.md".length).replace(/\/$/, ""));
 }
