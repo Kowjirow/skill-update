@@ -70,7 +70,15 @@ const APPLY = new Set(["update", "add", "remove", "merge"]);
 
 const slash = core.slash;
 const today = () => new Date().toLocaleDateString("sv-SE");
-const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+// One folder name per run, never shared: a revert run right after the update
+// it undoes (same second on a fast machine) must not write into that update's
+// backup. The folder itself is created only when something goes into it.
+function runDir(parent) {
+  const base = path.join(parent, new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23));
+  let dir = base;
+  for (let i = 2; fs.existsSync(dir); i++) dir = `${base}-${i}`;
+  return dir;
+}
 const short = (sha) => (sha ? sha.slice(0, 8) : "—");
 const resolvePath = (p) => path.resolve(String(p).replace(/^~(?=$|[\\/])/, os.homedir()));
 const rootPath = (name) => ROOT_NAMES[name] ?? resolvePath(name);
@@ -487,12 +495,11 @@ function cmdUpdate(args, opts, config) {
   let selected = select(data.flatMap((d) => d.items), args);
   if (!args.length) selected = selected.filter((i) => i.kind === "tracked" || i.kind === "checkout");
   const dryRun = !!opts["dry-run"];
-  const time = stamp();
   const report = { action: "update", date: today(), dryRun, updated: [], conflicts: [], skipped: [], errors: [] };
   const changedLocks = new Set();
   const doneCheckouts = new Set();
-  const backups = path.join(BACKUPS, time);
-  const conflictDir = path.join(core.HOME, "conflicts", time);
+  const backups = runDir(BACKUPS);
+  const conflictDir = runDir(path.join(core.HOME, "conflicts"));
 
   for (const item of selected) {
     const r = evaluate(item, opts);
@@ -904,7 +911,7 @@ function cmdRevert(args, opts, config) {
   if (!args.length) throw new CliError("usage", { usage: "skill-update revert <id>… [--dry-run]" });
   const data = gather(opts, config);
   const dryRun = !!opts["dry-run"];
-  const backups = path.join(BACKUPS, stamp());
+  const backups = runDir(BACKUPS);
   const report = { action: "revert", date: today(), dryRun, updated: [], conflicts: [], skipped: [], errors: [] };
   const changedLocks = new Set();
   for (const item of select(data.flatMap((d) => d.items), args)) {
@@ -1079,7 +1086,7 @@ function cmdAdd(args, opts, config) {
     lock.skills[id] = entry;
     writeLock(root.lock, lock);
     // `revert` on a skill added here takes it out again (into a backup).
-    writeJson(`${where(root.path, id, path.join(BACKUPS, stamp()))}.json`, {
+    writeJson(`${where(root.path, id, runDir(BACKUPS))}.json`, {
       id, root: slash(root.path), from: null, fromDate: null, to: head, files: result.files, entryBefore: null, date: today(),
     });
   }

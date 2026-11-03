@@ -462,6 +462,20 @@ test("revert puts back the version before the last update", () => {
   assert.match(read(rev.logFile, ""), /skill\(s\) put back to their previous version/);
 });
 
+test("revert right after the update, in the same second, still finds the old files", () => {
+  const s = tracked();
+  s.commit({ "skills/demo/notes.md": "notes v2\n" });
+  s.run(["update", "--all"]);
+  // Run folders are named to the millisecond and never reused, so revert gets
+  // its own folder even when a fast machine runs it in the same second.
+  const runs = fs.readdirSync(path.join(s.home, "backups"));
+  assert.equal(runs.length, 1);
+  assert.match(runs[0], /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z?$/);
+  s.run(["revert", "demo"]);
+  assert.equal(read(s.root, "design/demo/notes.md"), "notes v1\n");
+  assert.equal(fs.readdirSync(path.join(s.home, "backups")).length, 2);
+});
+
 test("diff shows the exact text an update would change", () => {
   const s = tracked();
   s.commit({ "skills/demo/notes.md": "notes v2\n", "skills/demo/new.md": "new\n" });
