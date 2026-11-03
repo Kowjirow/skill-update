@@ -2,7 +2,17 @@
   "name": "skill-update",
   "version": "0.4.0",
   "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups and a lock file of origins.",
-  "author": { "name": "Guillaume" },
+  "author": {
+    "name": "Guillaume"
+  },
+  "homepage": "https://github.com/Kowjirow/skill-update",
+  "repository": "https://github.com/Kowjirow/skill-update",
   "license": "MIT",
-  "keywords": ["skills", "update", "agent-skills", "claude-code", "maintenance"]
+  "keywords": [
+    "skills",
+    "update",
+    "agent-skills",
+    "claude-code",
+    "maintenance"
+  ]
 }

@@ -9,7 +9,7 @@ Une skill d'agent — pour Claude Code, Codex et tout agent qui lit `SKILL.md` �
 ### Claude Code — comme plugin (recommandé)
 
 ```
-/plugin marketplace add <owner>/skill-update
+/plugin marketplace add Kowjirow/skill-update
 /plugin install skill-update@skill-update
 ```
 
@@ -20,8 +20,8 @@ Puis taper `/skill-update`, ou simplement demander de mettre à jour vos skills.
 Avec la [CLI skills de Vercel](https://github.com/vercel-labs/skills), qui installe dans Codex, Claude Code, Cursor et plus de 20 autres agents :
 
 ```bash
-npx skills add <owner>/skill-update            # choisir le ou les agents à l'invite
-npx skills add <owner>/skill-update -a codex   # ou viser Codex directement
+npx skills add Kowjirow/skill-update            # choisir le ou les agents à l'invite
+npx skills add Kowjirow/skill-update -a codex   # ou viser Codex directement
 ```
 
 Dans Codex, l'appeler par `$skill-update` (ou `/skills` pour parcourir), ou simplement demander de mettre à jour vos skills.
@@ -31,7 +31,7 @@ Dans Codex, l'appeler par `$skill-update` (ou `/skills` pour parcourir), ou simp
 Copier le dossier de la skill dans le dossier de skills de votre agent :
 
 ```bash
-git clone https://github.com/<owner>/skill-update
+git clone https://github.com/Kowjirow/skill-update
 cp -R skill-update/skills/skill-update ~/.claude/skills/   # Claude Code
 cp -R skill-update/skills/skill-update ~/.agents/skills/   # Codex (anciennes installations : ~/.codex/skills/)
 ```
