@@ -1,0 +1,22 @@
+{
+  "name": "skill-update",
+  "version": "0.2.0",
+  "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups, a lock file of origins and a dated log of each update.",
+  "author": { "name": "Guillaume" },
+  "license": "MIT",
+  "keywords": ["skills", "update", "agent-skills", "codex", "maintenance"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Skill Update",
+    "shortDescription": "Update copied skills from their repositories, keeping your edits",
+    "longDescription": "Finds every skill in a folder, sub-folders included, records the repository and commit each one was copied from, and updates them with a three-way merge that keeps your own edits. Every replaced file is backed up and every update is listed in a dated Markdown log.",
+    "developerName": "Guillaume",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write", "Execute"],
+    "defaultPrompt": [
+      "Check my skills for updates.",
+      "Update my skills and keep my edits.",
+      "Record where this skill comes from."
+    ]
+  }
+}

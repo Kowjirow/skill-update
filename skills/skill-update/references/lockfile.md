@@ -63,11 +63,37 @@ For each file the tool knows three versions: **base** (at `commit`), **upstream*
   "roots": [{ "path": "C:/Users/me/.claude/skills" }, { "path": "D:/vault/skills", "lock": "D:/vault/registry/skills-lock.json" }],
   "ignore": ["synced"],
   "lang": "fr",
+  "logDir": "D:/vault/skill-updates",
   "afterUpdate": "node D:/vault/tools/after-skill-update.mjs"
 }
 ```
 
+The config lives in `~/.claude/skill-update/` when Claude Code is installed, else in `~/.agents/skill-update/`; `SKILL_UPDATE_HOME` overrides both. `--root` accepts a folder or a name: `default` and `claude` (`~/.claude/skills`), `agents` (`~/.agents/skills`, where Codex reads personal skills), `codex` (`$CODEX_HOME/skills`).
+
 `ignore` lists folder names or glob paths skipped by discovery (`synced` is the folder claude.ai manages in `~/.claude/skills`). Folders starting with `.` and `node_modules` are always skipped.
+
+## Update log
+
+Each `update` that writes something (or leaves a conflict) adds a section to `<logDir>/<YYYY-MM-DD>.md` (default `logDir`: `~/.claude/skill-update/logs`), in the language of the messages:
+
+```markdown
+# Skill updates — 2026-11-03
+
+## 10:12 — 2 skill(s) updated
+
+| Skill | Source | Before | After | Commit date | Files |
+| --- | --- | --- | --- | --- | --- |
+| `anthropic/mcp-builder` | [anthropics/skills](https://github.com/anthropics/skills) · `skills/mcp-builder` | `dbd4588f` | `ca45fc49` | 2026-10-28 | 2 updated, 1 added |
+
+### `anthropic/mcp-builder`
+
+- updated: `SKILL.md`, `reference/node_mcp_server.md`
+- added: `reference/node_mcp_server_v2.md`
+- upstream commits:
+  - ca45fc4 2026-10-28 Update mcp-builder skill: teach v2 of the MCP TypeScript SDK (#2087)
+```
+
+A second run the same day appends its own `##` section. The report gives the file as `logFile`.
 
 ## After-update command
 
@@ -93,7 +119,8 @@ When `afterUpdate` is set, `update` runs it through the shell after writing, wit
   "conflicts": [],
   "skipped": [],
   "errors": [],
-  "backupDir": "…"
+  "backupDir": "…",
+  "logFile": "C:/Users/me/.claude/skill-update/logs/2026-11-03.md"
 }
 ```
 
@@ -106,3 +133,4 @@ Use it to update a registry page, write a changelog, or commit. Its exit code an
 | `~/.claude/skill-update/cache/<host>/<owner>/<repo>` | bare, blobless clones of the sources |
 | `~/.claude/skill-update/backups/<time>/` | files replaced or removed by each update |
 | `~/.claude/skill-update/conflicts/<time>/` | merges with conflict markers, for review |
+| `~/.claude/skill-update/logs/<date>.md` | dated log of the updates, unless `logDir` moves it |

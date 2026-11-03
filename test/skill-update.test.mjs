@@ -326,6 +326,75 @@ test("plugins behind their marketplace are listed with the command", () => {
   assert.equal(plugins.find((p) => p.id === "beta@mk").status, "up-to-date");
 });
 
+test("each update is listed in a dated log, one section per run", () => {
+  const s = tracked();
+  const date = new Date().toLocaleDateString("sv-SE");
+  const c2 = s.commit({ "skills/demo/notes.md": "notes v2\n", "skills/demo/new.md": "new\n" }, "Improve the notes");
+  const up = s.run(["update", "--all"]).out;
+  const file = path.join(s.home, "logs", `${date}.md`);
+  assert.equal(up.logFile, file.split(path.sep).join("/"));
+  let log = read(s.home, `logs/${date}.md`);
+  assert.match(log, new RegExp(`^# Skill updates — ${date}\\n`));
+  assert.match(log, /\| `design\/demo` \| .* \| `[0-9a-f]{8}` \| `[0-9a-f]{8}` \| \d{4}-\d{2}-\d{2} \| 1 updated, 1 added \|/);
+  assert.ok(log.includes(`\`${s.c1.slice(0, 8)}\``) && log.includes(`\`${c2.slice(0, 8)}\``));
+  assert.match(log, /- updated: `notes\.md`/);
+  assert.match(log, /Improve the notes/);
+
+  s.commit({ "skills/demo/notes.md": "notes v3\n" });
+  s.run(["update", "--all", "--dry-run"]);
+  assert.equal(read(s.home, `logs/${date}.md`), log);
+  s.run(["update", "--all", "--lang", "fr"]);
+  log = read(s.home, `logs/${date}.md`);
+  assert.equal(log.match(/^# /gm).length, 1);
+  assert.equal(log.match(/^## /gm).length, 2);
+  assert.match(log, /- mis à jour : `notes\.md`/);
+});
+
+test("the log folder can be moved, and a conflict is logged too", () => {
+  const s = tracked();
+  const journal = path.join(s.dir, "notes", "skill-updates");
+  s.run(["config", "--root", s.root, "--log-dir", journal], { root: false });
+  write(s.root, { "design/demo/notes.md": "mine\n" });
+  s.commit({ "skills/demo/notes.md": "theirs\n" });
+  const up = s.run(["update", "--all"], { root: false }).out;
+  assert.equal(path.dirname(up.logFile), journal.split(path.sep).join("/"));
+  assert.match(fs.readFileSync(up.logFile, "utf8"), /### Not updated: conflicts\n\n- `design\/demo`: `notes\.md`/);
+});
+
+test("Codex: the skill follows the Agent Skills spec and ships its Codex files", () => {
+  const repo = fileURLToPath(new URL("..", import.meta.url));
+  const dir = path.join(repo, "skills", "skill-update");
+  const front = fs.readFileSync(path.join(dir, "SKILL.md"), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)[1];
+  const field = (k) => front.match(new RegExp(`^${k}:\\s*(.+)$`, "m"))?.[1].trim();
+  assert.match(field("name"), /^[a-z0-9]+(-[a-z0-9]+)*$/);
+  assert.equal(field("name"), path.basename(dir));
+  assert.ok(field("description").length <= 1024);
+  assert.ok(field("compatibility").length <= 500);
+  assert.match(fs.readFileSync(path.join(dir, "agents", "openai.yaml"), "utf8"), /^interface:\n {2}display_name: "Skill Update"/);
+
+  const codex = JSON.parse(fs.readFileSync(path.join(repo, ".codex-plugin", "plugin.json"), "utf8"));
+  assert.deepEqual(fs.readdirSync(path.join(repo, ".codex-plugin")), ["plugin.json"]);
+  assert.ok(fs.existsSync(path.join(repo, codex.skills, "skill-update", "SKILL.md")));
+  const claude = JSON.parse(fs.readFileSync(path.join(repo, ".claude-plugin", "plugin.json"), "utf8"));
+  assert.equal(codex.version, claude.version);
+});
+
+test("config knows each agent's folder; without Claude Code, state goes to ~/.agents", () => {
+  const s = sandbox(DEMO);
+  const user = path.join(s.dir, "user");
+  const env = { SKILL_UPDATE_HOME: "", CLAUDE_CONFIG_DIR: "", HOME: user, USERPROFILE: user, CODEX_HOME: path.join(s.dir, "codex-home") };
+  const slashed = (...p) => path.join(...p).split(path.sep).join("/");
+  const cfg = s.run(["config"], { root: false, env }).out;
+  assert.equal(cfg.file, slashed(user, ".agents", "skill-update", "config.json"));
+  assert.deepEqual(Object.fromEntries(cfg.knownRoots.map((r) => [r.name, r.path])), {
+    claude: slashed(user, ".claude", "skills"),
+    agents: slashed(user, ".agents", "skills"),
+    codex: slashed(s.dir, "codex-home", "skills"),
+  });
+  const set = s.run(["config", "--root", "agents"], { root: false, env }).out;
+  assert.equal(set.roots[0].path, slashed(user, ".agents", "skills"));
+});
+
 test("messages follow --lang", () => {
   const s = tracked();
   const fr = s.run(["check", "--lang", "fr"], { json: false });

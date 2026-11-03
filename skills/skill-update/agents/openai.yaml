@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Update"
+  short_description: "Update copied skills from their repositories, keeping your edits"
+  default_prompt: "Use $skill-update to check my skills for updates and show me what changed."

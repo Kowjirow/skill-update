@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // skill-update — keep skills copied from git repositories up to date.
 //
-//   skill-update config [--root default|<folder>] [--lock <file>] [--after-update <command>]
+//   skill-update config [--root default|claude|agents|codex|<folder>] [--lock <file>]
+//                       [--log-dir <folder>] [--after-update <command>]
 //                       [--remove-root <folder>] [--ignore <a,b>] [--lang en|fr]
 //   skill-update scan                     skills found and how each is tracked (no network)
 //   skill-update check [<id>…]            what changed upstream and what you changed
@@ -12,6 +13,10 @@
 //   skill-update track --from-npx [<id>…]       adopt what `npx skills` recorded
 //   skill-update untrack <id>
 //   skill-update plugins                  Claude Code plugins behind their marketplace
+//
+// Folder names: default and claude = ~/.claude/skills (Claude Code), agents =
+// ~/.agents/skills (Codex and other agents), codex = $CODEX_HOME/skills (~/.codex/skills).
+// Each update that changes something is listed in <log folder>/<date>.md.
 //
 // Common options: --root <folder> (that folder only), --json, --lang en|fr,
 // --offline (no fetch), --verbose, --exit-code (check: exit 1 when updates exist).
@@ -24,10 +29,18 @@ import * as core from "./core.mjs";
 import { detectLang, setLang, t } from "./i18n.mjs";
 
 const CONFIG_FILE = path.join(core.HOME, "config.json");
-const DEFAULT_ROOT = path.join(core.claudeDir(), "skills");
+// Where each agent loads personal skills from.
+const ROOT_NAMES = {
+  default: path.join(core.claudeDir(), "skills"),
+  claude: path.join(core.claudeDir(), "skills"),
+  agents: path.join(core.agentsDir(), "skills"),
+  codex: path.join(core.codexDir(), "skills"),
+};
+const DEFAULT_ROOT = ROOT_NAMES.default;
 const DEFAULT_IGNORE = ["synced"]; // ~/.claude/skills/synced is managed by claude.ai
+const DEFAULT_LOG_DIR = path.join(core.HOME, "logs");
 const LOCK_NAME = ".skill-update-lock.json";
-const VALUE_OPTIONS = new Set(["root", "lock", "after-update", "path", "ref", "commit", "lang", "ignore", "remove-root"]);
+const VALUE_OPTIONS = new Set(["root", "lock", "after-update", "log-dir", "path", "ref", "commit", "lang", "ignore", "remove-root"]);
 const ENTRY_FIELDS = ["type", "note", "source", "ref", "path", "commit", "include", "exclude", "extras", "updatedAt"];
 const STATUS_ORDER = ["update-available", "merge-available", "conflict", "source-missing", "modified", "untracked", "missing", "error", "manual", "linked", "up-to-date"];
 const ICON = {
@@ -41,6 +54,8 @@ const today = () => new Date().toLocaleDateString("sv-SE");
 const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const short = (sha) => (sha ? sha.slice(0, 8) : "—");
 const resolvePath = (p) => path.resolve(String(p).replace(/^~(?=$|[\\/])/, os.homedir()));
+const rootPath = (name) => ROOT_NAMES[name] ?? resolvePath(name);
+const knownRoots = () => Object.entries(ROOT_NAMES).filter(([n]) => n !== "default").map(([name, p]) => ({ name, path: slash(p), exists: fs.existsSync(p) }));
 const samePath = (a, b) =>
   process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 const clip = (list, n = 8) => (list.length > n ? `${list.slice(0, n).join(", ")} … (+${list.length - n})` : list.join(", "));
@@ -108,7 +123,7 @@ function rootsFor(opts, config) {
   const configured = (config?.roots ?? []).map((r) => ({ path: resolvePath(r.path), lock: r.lock ? resolvePath(r.lock) : null }));
   const withLock = (r) => ({ ...r, lock: r.lock ?? path.join(r.path, LOCK_NAME) });
   if (opts.root && opts.root !== true) {
-    const p = opts.root === "default" ? DEFAULT_ROOT : resolvePath(opts.root);
+    const p = rootPath(opts.root);
     const known = configured.find((r) => samePath(r.path, p));
     return [withLock({ path: p, lock: opts.lock && opts.lock !== true ? resolvePath(opts.lock) : known?.lock })];
   }
@@ -239,6 +254,8 @@ function evaluateCheckout(item, opts) {
   return { status, checkout: slash(item.checkout), commit: s.head, head: s.upstream, behind: s.behind || undefined, ahead: s.ahead || undefined, log: s.log };
 }
 
+const GROUP_ORDER = ["update", "merge", "add", "remove", "conflict", "modified", "local-only"];
+
 function groupFiles(files) {
   const group = {};
   const as = { "modified-locally": "modified", "deleted-locally": "modified", "kept-modified": "modified" };
@@ -247,7 +264,7 @@ function groupFiles(files) {
     const k = as[f.action] ?? f.action;
     (group[k] ??= []).push(f.rel);
   }
-  return group;
+  return Object.fromEntries(GROUP_ORDER.filter((k) => group[k]).map((k) => [k, group[k]]));
 }
 
 function publicResult(item, r) {
@@ -278,12 +295,12 @@ function summarize(skills) {
 
 function cmdConfig(args, opts) {
   let config = readJson(CONFIG_FILE, null);
-  const changing = ["root", "remove-root", "after-update", "lang", "ignore"].some((k) => opts[k] !== undefined);
+  const changing = ["root", "remove-root", "after-update", "log-dir", "lang", "ignore"].some((k) => opts[k] !== undefined);
   if (changing) {
     config ??= {};
     config.roots ??= [];
     if (opts.root && opts.root !== true) {
-      const p = opts.root === "default" ? DEFAULT_ROOT : resolvePath(opts.root);
+      const p = rootPath(opts.root);
       let root = config.roots.find((r) => samePath(resolvePath(r.path), p));
       if (!root) config.roots.push((root = { path: slash(p) }));
       if (opts.lock && opts.lock !== true) root.lock = slash(resolvePath(opts.lock));
@@ -292,6 +309,10 @@ function cmdConfig(args, opts) {
     if (opts["after-update"] !== undefined) {
       if (opts["after-update"] === true || opts["after-update"] === "") delete config.afterUpdate;
       else config.afterUpdate = opts["after-update"];
+    }
+    if (opts["log-dir"] !== undefined) {
+      if (opts["log-dir"] === true || opts["log-dir"] === "") delete config.logDir;
+      else config.logDir = slash(resolvePath(opts["log-dir"]));
     }
     if (opts.lang && opts.lang !== true) config.lang = opts.lang;
     if (opts.ignore !== undefined) config.ignore = String(opts.ignore === true ? "" : opts.ignore).split(",").map((s) => s.trim()).filter(Boolean);
@@ -307,8 +328,10 @@ function cmdConfig(args, opts) {
     file: slash(CONFIG_FILE),
     defaultRoot: slash(DEFAULT_ROOT),
     defaultRootExists: fs.existsSync(DEFAULT_ROOT),
+    knownRoots: knownRoots(),
     roots,
     ignore: config?.ignore ?? DEFAULT_IGNORE,
+    logDir: slash(logDir(config)),
     ...(config?.afterUpdate && { afterUpdate: config.afterUpdate }),
     ...(config?.lang && { lang: config.lang }),
   };
@@ -316,6 +339,7 @@ function cmdConfig(args, opts) {
   console.log(t("config.file", { file: out.file }));
   if (!roots.length) console.log(t("config.none"));
   for (const r of roots) console.log(`${r.exists ? "📁" : "⚠️ "} ${t("config.root", { root: r.path, lock: r.lock })}`);
+  console.log(t("config.log-dir", { dir: out.logDir }));
   if (out.afterUpdate) console.log(t("config.after", { cmd: out.afterUpdate }));
 }
 
@@ -419,7 +443,7 @@ function cmdUpdate(args, opts, config) {
         skip(r.status);
         continue;
       }
-      const result = { ...id, checkout: r.checkout, from: r.commit, to: r.head, commits: r.behind };
+      const result = { ...id, checkout: r.checkout, from: r.commit, to: r.head, commits: r.behind, ...(r.log?.length && { log: r.log }) };
       const error = dryRun ? null : core.fastForward(item.checkout);
       if (error) report.conflicts.push({ ...result, error });
       else report.updated.push(result);
@@ -460,6 +484,7 @@ function cmdUpdate(args, opts, config) {
       toDate: core.commitDate(r.repo, r.head),
       files: groupFiles(ops.map((f) => ({ rel: f.rel, action: f.action === "conflict" ? "update" : f.action }))),
       ...(conflicts.length && { resolved: opts.theirs ? "theirs" : "ours", conflicts: conflicts.map((f) => f.rel) }),
+      ...(r.log?.length && { log: r.log }),
     };
     if (!dryRun) {
       const backup = where(item, backups);
@@ -473,6 +498,7 @@ function cmdUpdate(args, opts, config) {
   for (const d of changedLocks) writeLock(d.root.lock, d.lock);
   if (report.updated.some((u) => u.backup)) report.backupDir = slash(backups);
   if (report.conflicts.some((c) => c.saved)) report.conflictDir = slash(conflictDir);
+  if (!dryRun && (report.updated.length || report.conflicts.length)) report.logFile = slash(writeUpdateLog(report, config));
   if (!dryRun && report.updated.length && config?.afterUpdate && !opts["no-after-update"]) {
     report.afterUpdate = runAfterUpdate(config.afterUpdate, report);
   }
@@ -515,6 +541,52 @@ function removeEmptyDirs(dir, stop) {
   }
 }
 
+const logDir = (config) => (config?.logDir ? resolvePath(config.logDir) : DEFAULT_LOG_DIR);
+
+function sourceCell(u) {
+  if (u.checkout) return `\`${u.checkout}\``;
+  const gh = u.source?.match(/^https:\/\/(?:github|gitlab)\.com\/(.+)$/);
+  const where = gh ? `[${gh[1]}](${u.source})` : `\`${u.source}\``;
+  return u.path ? `${where} · \`${u.path}\`` : where;
+}
+
+// The trace of an update: <log folder>/<date>.md, one section per run of the
+// day, with a table of the skills updated and the details below it.
+function writeUpdateLog(report, config) {
+  const file = path.join(logDir(config), `${report.date}.md`);
+  const time = new Date().toLocaleTimeString("sv-SE").slice(0, 5);
+  const code = (list) => list.map((f) => `\`${f}\``).join(", ");
+  const filesCell = (u) => (u.checkout ? t("check.commits", { n: u.commits }) : Object.entries(u.files).map(([k, list]) => `${list.length} ${t(`files.${k}`)}`).join(", "));
+  const lines = [`## ${t("log.run", { time, n: report.updated.length })}`, ""];
+  if (report.updated.length) {
+    lines.push(`| ${["skill", "source", "from", "to", "date", "files"].map((k) => t(`log.col.${k}`)).join(" | ")} |`, `|${" --- |".repeat(6)}`);
+    for (const u of report.updated) {
+      lines.push(`| \`${u.id}\` | ${sourceCell(u)} | \`${short(u.from)}\` | \`${short(u.to)}\` | ${u.toDate ?? ""} | ${filesCell(u)} |`);
+    }
+    for (const u of report.updated) {
+      lines.push("", `### \`${u.id}\``, "");
+      for (const [k, list] of Object.entries(u.files ?? {})) lines.push(`- ${t("log.item", { label: t(`files.${k}`), list: code(list) })}`);
+      if (u.resolved) lines.push(`- ${t("log.resolved", { files: code(u.conflicts), how: `--${u.resolved}` })}`);
+      if (u.log?.length) lines.push(`- ${t("log.item", { label: t("log.commits"), list: "" }).trim()}`, ...u.log.map((l) => `  - ${l}`));
+    }
+  }
+  if (report.conflicts.length) {
+    lines.push("", `### ${t("log.conflicts")}`, "");
+    for (const c of report.conflicts) {
+      lines.push(`- ${t("log.item", { label: `\`${c.id}\``, list: `${c.files ? code(c.files) : c.error}${c.saved ? ` (\`${c.saved}\`)` : ""}` })}`);
+    }
+  }
+  if (report.errors.length) {
+    lines.push("", `### ${t("status.error")}`, "");
+    for (const e of report.errors) lines.push(`- ${t("log.item", { label: `\`${e.id}\``, list: e.error })}`);
+  }
+  if (report.backupDir) lines.push("", t("update.backup", { dir: `\`${report.backupDir}\`` }));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file)) fs.appendFileSync(file, `\n${lines.join("\n")}\n`);
+  else fs.writeFileSync(file, `# ${t("log.title", { date: report.date })}\n\n${lines.join("\n")}\n`);
+  return file;
+}
+
 function runAfterUpdate(command, report) {
   const r = spawnSync(command, { shell: true, input: JSON.stringify(report), encoding: "utf8", windowsHide: true });
   return { command, code: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(-2000) };
@@ -532,6 +604,7 @@ function printUpdate(report) {
   if (!report.updated.length && !report.conflicts.length) console.log(t("update.nothing"));
   if (report.conflictDir) console.log(t("update.conflicts-saved", { dir: report.conflictDir }));
   if (report.backupDir) console.log(t("update.backup", { dir: report.backupDir }));
+  if (report.logFile) console.log(t("log.written", { file: report.logFile }));
   if (report.dryRun) console.log(t("update.dry-run"));
   if (report.afterUpdate) {
     console.log(t("update.after", { cmd: report.afterUpdate.command, code: report.afterUpdate.code }));
@@ -747,7 +820,7 @@ function main() {
     if (!commands[command]) throw new CliError("usage", { usage: "skill-update <config|scan|check|update|track|untrack|plugins> (--help)" });
     commands[command](args, opts, config);
   } catch (e) {
-    if (opts.json) print({ error: e.code ?? "error", message: e.message, ...(e.code === "not-configured" && { defaultRoot: slash(DEFAULT_ROOT) }) });
+    if (opts.json) print({ error: e.code ?? "error", message: e.message, ...(e.code === "not-configured" && { defaultRoot: slash(DEFAULT_ROOT), knownRoots: knownRoots() }) });
     else console.error(`❌ ${e.message}`);
     process.exitCode = 2;
   }

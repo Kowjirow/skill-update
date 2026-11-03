@@ -11,8 +11,22 @@ export function claudeDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
 }
 
-// Config, cache, backups. Outside the skill folder, which an update replaces.
-export const HOME = process.env.SKILL_UPDATE_HOME || path.join(claudeDir(), "skill-update");
+export function codexDir() {
+  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+}
+
+export const agentsDir = () => path.join(os.homedir(), ".agents");
+
+// Config, cache, backups and logs, outside the skill folder, which an update
+// replaces: beside Claude Code's settings when it is installed, else in
+// ~/.agents (Codex and other agents). One place, shared by every agent.
+function stateDir() {
+  if (process.env.SKILL_UPDATE_HOME) return process.env.SKILL_UPDATE_HOME;
+  if (process.env.CLAUDE_CONFIG_DIR || fs.existsSync(claudeDir())) return path.join(claudeDir(), "skill-update");
+  return path.join(agentsDir(), "skill-update");
+}
+
+export const HOME = stateDir();
 
 export class GitError extends Error {}
 
