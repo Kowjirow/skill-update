@@ -2,10 +2,16 @@
   "name": "skill-update",
   "version": "0.4.0",
   "private": true,
-  "description": "Update skills copied from git repositories, with three-way merge, backups and a lock file.",
+  "description": "Keep skills copied from git repositories up to date in any folder: finds where each came from, flags risky changes, merges your own edits, backs up every replaced file and logs every update.",
   "type": "module",
-  "bin": { "skill-update": "skills/skill-update/scripts/skill-update.mjs" },
-  "scripts": { "test": "node --test" },
-  "engines": { "node": ">=18" },
+  "bin": {
+    "skill-update": "skills/skill-update/scripts/skill-update.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT"
 }

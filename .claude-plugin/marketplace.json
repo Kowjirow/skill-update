@@ -1,12 +1,14 @@
 {
   "name": "skill-update",
-  "owner": { "name": "Guillaume" },
+  "owner": {
+    "name": "Guillaume"
+  },
   "plugins": [
     {
       "name": "skill-update",
       "source": "./",
       "version": "0.4.0",
-      "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups and a lock file of origins."
+      "description": "Keep skills copied from git repositories up to date in any folder: finds where each came from, flags risky changes, merges your own edits, backs up every replaced file and logs every update."
     }
   ]
 }

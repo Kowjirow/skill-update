@@ -1,7 +1,7 @@
 {
   "name": "skill-update",
   "version": "0.4.0",
-  "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups, a lock file of origins and a dated log of each update.",
+  "description": "Keep skills copied from git repositories up to date in any folder: finds where each came from, flags risky changes, merges your own edits, backs up every replaced file and logs every update.",
   "author": {
     "name": "Guillaume"
   },
