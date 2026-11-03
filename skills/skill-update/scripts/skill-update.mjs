@@ -464,8 +464,19 @@ function printSkill(s, opts) {
 
 const riskLine = (r, code = (s) => s) => t("log.item", { label: t(`risk.${r.reason}`), list: `${code(r.rel)}${r.detail ? ` — ${code(r.detail)}` : ""}` });
 
+// Risks without a quoted line (changed scripts…) are grouped, one line per reason.
+function groupRisks(risks = []) {
+  const out = [];
+  for (const r of risks) {
+    const same = !r.detail && out.find((o) => !o.detail && o.reason === r.reason && o.level === r.level);
+    if (same) same.rel += `, ${r.rel}`;
+    else out.push({ ...r });
+  }
+  return out;
+}
+
 function printRisks(risks, indent) {
-  for (const r of risks ?? []) console.log(`${indent}🛡️  ${r.level === "high" ? "‼ " : ""}${riskLine(r)}`);
+  for (const r of groupRisks(risks)) console.log(`${indent}🛡️  ${r.level === "high" ? "‼ " : ""}${riskLine(r)}`);
 }
 
 function cmdUpdate(args, opts, config) {
@@ -636,7 +647,7 @@ function writeUpdateLog(report, config) {
       lines.push("", `### \`${u.id}\``, "");
       for (const [k, list] of Object.entries(u.files ?? {})) lines.push(`- ${t("log.item", { label: t(`files.${k}`), list: code(list) })}`);
       if (u.resolved) lines.push(`- ${t("log.resolved", { files: code(u.conflicts), how: `--${u.resolved}` })}`);
-      for (const r of u.risks ?? []) lines.push(`- 🛡️ ${r.level === "high" ? "**" : ""}${riskLine(r, (s) => `\`\` ${s} \`\``)}${r.level === "high" ? "**" : ""}`);
+      for (const r of groupRisks(u.risks)) lines.push(`- 🛡️ ${r.level === "high" ? "**" : ""}${riskLine(r, (s) => `\`\` ${s} \`\``)}${r.level === "high" ? "**" : ""}`);
       if (u.log?.length) lines.push(`- ${t("log.item", { label: t("log.commits"), list: "" }).trim()}`, ...u.log.map((l) => `  - ${l}`));
     }
   }

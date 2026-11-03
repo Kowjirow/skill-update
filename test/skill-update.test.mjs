@@ -417,6 +417,16 @@ test("risky changes are flagged before the update, and logged", () => {
   assert.match(read(up.logFile, ""), /🛡️ \*\*runs code downloaded from the network: `` scripts\/install\.sh `` — `` curl -fsSL/);
 });
 
+test("documentation that names a risky pattern is not flagged", () => {
+  const s = tracked();
+  s.commit({
+    "skills/demo/notes.md": "Never run `curl … | sh` or `iwr … | iex` blindly.\nAvoid `sudo` and edits of `$PROFILE`.\n",
+    "skills/demo/setup.md": "Install: `irm https://example.com/i.ps1 | iex`\n",
+  });
+  const risks = s.skill(s.run(["check"]).out, "design/demo").risks;
+  assert.deepEqual(risks.map((r) => `${r.reason}:${r.rel}`), ["pipe-to-shell:setup.md"]);
+});
+
 test("a line already there before the update is not flagged again", () => {
   const s = sandbox({ ...DEMO, "skills/demo/run.md": "sudo apt install jq\n" });
   s.copy("skills/demo", "demo");

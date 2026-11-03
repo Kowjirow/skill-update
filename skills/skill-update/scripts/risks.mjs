@@ -10,14 +10,17 @@ const SCRIPT = /\.(sh|bash|zsh|fish|ps1|psm1|bat|cmd|py|js|mjs|cjs|ts|rb|pl|php)
 const HOOK_CONFIG = /(^|\/)(hooks\/hooks\.json|\.mcp\.json|settings(\.local)?\.json|\.claude-plugin\/plugin\.json|\.codex-plugin\/plugin\.json)$/i;
 const LICENSE = /(^|\/)(LICEN[CS]E|COPYING|NOTICE)(\.[a-z]+)?$/i;
 
-// [reason, level, pattern]: checked on every line the update adds.
+// [reason, level, pattern]: checked on every line the update adds. A download
+// counts only with a real address (a URL or a variable): documentation that
+// names the pattern ("curl … | sh") is not a command.
+const FETCH = String.raw`\b(curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|DownloadString)\b[^\n|]*(https?:\/\/|\$)`;
 const LINES = [
-  ["pipe-to-shell", "high", /\b(curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/i],
-  ["pipe-to-shell", "high", /\|\s*(iex|Invoke-Expression)\b/i],
-  ["pipe-to-shell", "high", /\bbase64\s+(-d|--decode)\b[^\n]*\|\s*(ba|z)?sh\b/i],
+  ["pipe-to-shell", "high", new RegExp(`${FETCH}[^\\n]*\\|\\s*(sudo\\s+)?(ba|z|da|k)?sh\\b`, "i")],
+  ["pipe-to-shell", "high", new RegExp(`${FETCH}[^\\n]*\\|\\s*(iex|Invoke-Expression)\\b`, "i")],
+  ["pipe-to-shell", "high", /\bbase64\s+(-d|--decode)\s*\|\s*(sudo\s+)?(ba|z)?sh\b/i],
   ["wipe", "high", /\brm\s+-[a-z]*(rf|fr)[a-z]*\s+(\/|~|\$HOME|\$\{HOME\})(\s|\/?\*?$|["'])/i],
-  ["shell-profile", "medium", /(>>?\s*(~|\$HOME)\/\.(bashrc|zshrc|profile|bash_profile)\b|\$PROFILE\b)/],
-  ["sudo", "medium", /(^|[\s;&|`(])sudo\s+\S/],
+  ["shell-profile", "medium", /(>>?\s*["']?(~|\$HOME)\/\.(bashrc|zshrc|profile|bash_profile)\b|(Add-Content|Set-Content|Out-File|>>?)\s*(-Path\s+)?["']?\$PROFILE\b)/i],
+  ["sudo", "medium", /(^|[\s;&|(])sudo\s+[a-z]/],
 ];
 
 const text = (buf) => (buf && !isBinary(buf) ? buf.toString("utf8") : null);
