@@ -1,0 +1,8 @@
+{
+  "name": "skill-update",
+  "version": "0.1.0",
+  "description": "Update skills copied from git repositories into any skills folder, with three-way merge of your own edits, backups and a lock file of origins.",
+  "author": { "name": "Guillaume" },
+  "license": "MIT",
+  "keywords": ["skills", "update", "agent-skills", "claude-code", "maintenance"]
+}
