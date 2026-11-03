@@ -556,7 +556,8 @@ function writeUpdateLog(report, config) {
   const file = path.join(logDir(config), `${report.date}.md`);
   const time = new Date().toLocaleTimeString("sv-SE").slice(0, 5);
   const code = (list) => list.map((f) => `\`${f}\``).join(", ");
-  const filesCell = (u) => (u.checkout ? t("check.commits", { n: u.commits }) : Object.entries(u.files).map(([k, list]) => `${list.length} ${t(`files.${k}`)}`).join(", "));
+  const filesCell = (u) =>
+    u.checkout ? t("check.commits", { n: u.commits }) : Object.entries(u.files).map(([k, list]) => t("log.item", { label: t(`files.${k}`), list: list.length })).join(", ");
   const lines = [`## ${t("log.run", { time, n: report.updated.length })}`, ""];
   if (report.updated.length) {
     lines.push(`| ${["skill", "source", "from", "to", "date", "files"].map((k) => t(`log.col.${k}`)).join(" | ")} |`, `|${" --- |".repeat(6)}`);

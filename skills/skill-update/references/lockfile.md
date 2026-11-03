@@ -83,7 +83,7 @@ Each `update` that writes something (or leaves a conflict) adds a section to `<l
 
 | Skill | Source | Before | After | Commit date | Files |
 | --- | --- | --- | --- | --- | --- |
-| `anthropic/mcp-builder` | [anthropics/skills](https://github.com/anthropics/skills) · `skills/mcp-builder` | `dbd4588f` | `ca45fc49` | 2026-10-28 | 2 updated, 1 added |
+| `anthropic/mcp-builder` | [anthropics/skills](https://github.com/anthropics/skills) · `skills/mcp-builder` | `dbd4588f` | `ca45fc49` | 2026-10-28 | updated: 2, added: 1 |
 
 ### `anthropic/mcp-builder`
 

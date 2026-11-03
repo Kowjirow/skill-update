@@ -335,7 +335,7 @@ test("each update is listed in a dated log, one section per run", () => {
   assert.equal(up.logFile, file.split(path.sep).join("/"));
   let log = read(s.home, `logs/${date}.md`);
   assert.match(log, new RegExp(`^# Skill updates — ${date}\\n`));
-  assert.match(log, /\| `design\/demo` \| .* \| `[0-9a-f]{8}` \| `[0-9a-f]{8}` \| \d{4}-\d{2}-\d{2} \| 1 updated, 1 added \|/);
+  assert.match(log, /\| `design\/demo` \| .* \| `[0-9a-f]{8}` \| `[0-9a-f]{8}` \| \d{4}-\d{2}-\d{2} \| updated: 1, added: 1 \|/);
   assert.ok(log.includes(`\`${s.c1.slice(0, 8)}\``) && log.includes(`\`${c2.slice(0, 8)}\``));
   assert.match(log, /- updated: `notes\.md`/);
   assert.match(log, /Improve the notes/);
