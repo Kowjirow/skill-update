@@ -11,6 +11,9 @@ Most skills are installed by copying a folder from a repository into `~/.claude/
 - **Keeps your edits.** Updates are three-way merges (`git merge-file`): your local patches survive, a real overlap is reported as a conflict and the skill is left untouched.
 - **Safe.** Shows upstream commits before anything is written, asks before updating, copies every replaced or removed file to a backup folder, never deletes a skill.
 - **A dated log.** Every update is listed in `<date>.md`: the skills, their commits before and after, the files changed and the upstream commit subjects. Put the log folder wherever you keep notes.
+- **Flags what deserves a look.** A skill's scripts run with your agent's permissions. Before you accept, it points out new scripts, lines that run code downloaded from the network (`curl … | sh`), newly pre-approved tools, hook configuration and licence changes, and `diff` shows the exact text.
+- **Undo, pin, add.** `revert` puts back the version before the last update; `pin` keeps a skill where it is; `add` copies a new skill from GitHub with its licence and tracks it in one step.
+- **A reminder.** `remind` prints one line when updates wait, from the last check, and refreshes that check in the background once a week. In Claude Code it can run as a session-start hook.
 - **No API, no token, no rate limit.** It uses git directly (bare, blobless clones in a cache), so it works with GitHub, GitLab, any git host or a local folder, on any default branch.
 - **The rest of your skills too.** Adopts skills installed by `npx skills`, fast-forwards skills that are git clones, and lists Claude Code plugins behind their marketplace with the command to update them.
 - **English and French** messages, picked from your locale or `--lang`.
@@ -42,9 +45,20 @@ The script also runs on its own:
 node skills/skill-update/scripts/skill-update.mjs config --root claude         # or agents, codex, <folder>
 node skills/skill-update/scripts/skill-update.mjs check
 node skills/skill-update/scripts/skill-update.mjs track brag https://github.com/latent-spaces/brag/tree/main/skills/brag
+node skills/skill-update/scripts/skill-update.mjs diff brag
 node skills/skill-update/scripts/skill-update.mjs update --all --dry-run
 node skills/skill-update/scripts/skill-update.mjs update --all
+node skills/skill-update/scripts/skill-update.mjs revert brag
+node skills/skill-update/scripts/skill-update.mjs pin brag --note "client project"
+node skills/skill-update/scripts/skill-update.mjs add https://github.com/anthropics/skills/tree/main/skills/canvas-design --to design --dry-run
+node skills/skill-update/scripts/skill-update.mjs remind
 node skills/skill-update/scripts/skill-update.mjs plugins
+```
+
+Reminder at each Claude Code session start, in `~/.claude/settings.json`:
+
+```json
+{ "hooks": { "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"<path>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }] }] } }
 ```
 
 `--json` on any command gives machine-readable output. `--help` lists every option.

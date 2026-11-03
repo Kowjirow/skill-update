@@ -31,6 +31,7 @@ One per skills folder: `<folder>/.skill-update-lock.json` unless `config --lock`
 | `ref` | Branch or tag followed. Absent: the repository's default branch. |
 | `path` | Folder of the skill in the repository. `""` when the skill is the whole repository. |
 | `commit` | Commit the local copy matches. The three-way merge uses it as the base. |
+| `pinned` | `true` or a note: the skill keeps its version; `check` reports what waits upstream (`pin` / `unpin`). |
 | `include` | Optional globs: only these files are managed. |
 | `exclude` | Globs of upstream files left out (not copied at track time). New files under an excluded folder stay out. |
 | `extras` | Local file → path elsewhere in the repository (a root `LICENSE` copied beside the skill). |
@@ -93,7 +94,24 @@ Each `update` that writes something (or leaves a conflict) adds a section to `<l
   - ca45fc4 2026-10-28 Update mcp-builder skill: teach v2 of the MCP TypeScript SDK (#2087)
 ```
 
-A second run the same day appends its own `##` section. The report gives the file as `logFile`.
+A second run the same day appends its own `##` section. The report gives the file as `logFile`. `revert` and `add` write their own sections ("put back to their previous version", "added"), and risks appear under each skill as 🛡️ lines, `high` ones in bold.
+
+## Risks
+
+`check`, `update` and `add` compare each file an update would write with its installed version, and flag:
+
+| reason | level | when |
+| --- | --- | --- |
+| `new-script` | high | a new `.sh`, `.ps1`, `.py`, `.js`, `.mjs`… or executable file |
+| `pipe-to-shell` | high | an added line pipes a download into a shell (`curl … \| sh`, `iwr … \| iex`, `base64 -d … \| sh`) |
+| `wipe` | high | an added `rm -rf` on `/`, `~` or `$HOME` |
+| `allowed-tools` | high | `allowed-tools` in `SKILL.md` appears or changes |
+| `hook-config` | high | `hooks/hooks.json`, `.mcp.json`, `settings.json` or a plugin manifest appears or changes |
+| `script-changed` | medium | an existing script changes |
+| `sudo`, `shell-profile` | medium | an added line uses `sudo` or writes to `~/.bashrc`, `~/.zshrc`, `$PROFILE` |
+| `license-changed` | medium | a `LICENSE`, `COPYING` or `NOTICE` file, or `license:` in `SKILL.md`, changes |
+
+These are prompts to look, not verdicts: `diff` shows the lines.
 
 ## After-update command
 
@@ -131,6 +149,7 @@ Use it to update a registry page, write a changelog, or commit. Its exit code an
 | Folder | Content |
 | --- | --- |
 | `~/.claude/skill-update/cache/<host>/<owner>/<repo>` | bare, blobless clones of the sources |
-| `~/.claude/skill-update/backups/<time>/` | files replaced or removed by each update |
+| `~/.claude/skill-update/backups/<time>/` | files replaced or removed by each update, and beside each skill's folder a `<skill>.json` manifest (`from`, `to`, files, lock entry before) that `revert` uses |
+| `~/.claude/skill-update/last-check.json` | summary of the last full `check`, read by `remind` |
 | `~/.claude/skill-update/conflicts/<time>/` | merges with conflict markers, for review |
 | `~/.claude/skill-update/logs/<date>.md` | dated log of the updates, unless `logDir` moves it |

@@ -11,6 +11,9 @@ La plupart des skills s'installent en copiant un dossier d'un dépôt dans `~/.c
 - **Garde vos retouches.** Une mise à jour est une fusion à trois voies (`git merge-file`) : vos patchs locaux survivent ; un vrai chevauchement est signalé comme conflit et la skill n'est pas touchée.
 - **Prudent.** Montre les commits amont avant d'écrire, demande avant de mettre à jour, copie chaque fichier remplacé ou retiré dans un dossier de sauvegarde, ne supprime jamais une skill.
 - **Un journal daté.** Chaque mise à jour est listée dans `<date>.md` : les skills, leurs commits avant et après, les fichiers changés et les intitulés des commits amont. Le dossier du journal se place où vous rangez vos notes.
+- **Signale ce qui mérite un regard.** Les scripts d'une skill tournent avec les droits de votre agent. Avant que vous acceptiez, il relève les nouveaux scripts, les lignes qui exécutent du code téléchargé (`curl … | sh`), les outils nouvellement pré-autorisés, la configuration de hooks et les changements de licence ; `diff` montre le texte exact.
+- **Annuler, figer, ajouter.** `revert` remet la version d'avant la dernière mise à jour ; `pin` garde une skill où elle est ; `add` copie une nouvelle skill depuis GitHub, avec sa licence, et la suit en une seule commande.
+- **Un rappel.** `remind` affiche une ligne quand des mises à jour attendent, d'après la dernière vérification, et la refait en arrière-plan une fois par semaine. Dans Claude Code, il peut tourner à l'ouverture de chaque session.
 - **Ni API, ni jeton, ni quota.** Il passe directement par git (clones nus et partiels en cache) : GitHub, GitLab, tout hébergeur git ou un dossier local, quelle que soit la branche par défaut.
 - **Le reste aussi.** Adopte les skills installées par `npx skills`, fait avancer les skills qui sont des clones git, et liste les plugins Claude Code en retard sur leur place de marché avec la commande pour les mettre à jour.
 - **Messages en français et en anglais**, selon la langue du système ou `--lang`.
@@ -42,9 +45,20 @@ Le script se lance aussi seul :
 node skills/skill-update/scripts/skill-update.mjs config --root claude         # ou agents, codex, <dossier>
 node skills/skill-update/scripts/skill-update.mjs check --lang fr
 node skills/skill-update/scripts/skill-update.mjs track brag https://github.com/latent-spaces/brag/tree/main/skills/brag
+node skills/skill-update/scripts/skill-update.mjs diff brag
 node skills/skill-update/scripts/skill-update.mjs update --all --dry-run
 node skills/skill-update/scripts/skill-update.mjs update --all
+node skills/skill-update/scripts/skill-update.mjs revert brag
+node skills/skill-update/scripts/skill-update.mjs pin brag --note "projet client"
+node skills/skill-update/scripts/skill-update.mjs add https://github.com/anthropics/skills/tree/main/skills/canvas-design --to design --dry-run
+node skills/skill-update/scripts/skill-update.mjs remind
 node skills/skill-update/scripts/skill-update.mjs plugins
+```
+
+Rappel à l'ouverture de chaque session Claude Code, dans `~/.claude/settings.json` :
+
+```json
+{ "hooks": { "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"<chemin>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }] }] } }
 ```
 
 `--json` donne une sortie lisible par une machine, sur toutes les commandes. `--help` liste les options.

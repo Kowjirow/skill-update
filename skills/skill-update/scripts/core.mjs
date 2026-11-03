@@ -175,8 +175,11 @@ function parseLsTree(out) {
   return entries;
 }
 
+const blobCache = new Map();
+
 export function readBlobs(repo, oids) {
-  const wanted = [...new Set(oids.filter(Boolean))];
+  const all = [...new Set(oids.filter(Boolean))];
+  const wanted = all.filter((oid) => !blobCache.has(oid));
   if (repo.partial && wanted.length) {
     // The batch fetch git itself runs for a promisor remote: one round trip
     // instead of one per missing file. On failure, cat-file fetches lazily.
@@ -186,9 +189,8 @@ export function readBlobs(repo, oids) {
       { cwd: repo.dir, input: wanted.join("\n") + "\n", allowFail: true },
     );
   }
-  const blobs = new Map();
-  for (const oid of wanted) blobs.set(oid, git(["cat-file", "blob", oid], { cwd: repo.dir, buffer: true }).stdout);
-  return blobs;
+  for (const oid of wanted) blobCache.set(oid, git(["cat-file", "blob", oid], { cwd: repo.dir, buffer: true }).stdout);
+  return new Map(all.map((oid) => [oid, blobCache.get(oid)]));
 }
 
 export function showFile(repo, commit, file) {
@@ -488,6 +490,25 @@ export function findExtras(repo, commit, sub, rels) {
   for (const rel of rels) {
     const hit = ancestors.map((d) => (d ? `${d}/${rel}` : rel)).find((p) => found.has(p));
     if (hit) extras[rel] = hit;
+  }
+  return extras;
+}
+
+// Licence files beside the skill's folder or higher up in the repository,
+// nearest first: a new copy takes them along, so it keeps its terms.
+export function licenseFiles(repo, commit, sub) {
+  const ancestors = [];
+  for (let d = sub; d; ) {
+    d = d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "";
+    ancestors.push(d);
+  }
+  const extras = {};
+  for (const d of ancestors) {
+    for (const e of fullTree(repo, commit)) {
+      const dir = e.path.includes("/") ? e.path.slice(0, e.path.lastIndexOf("/")) : "";
+      const name = e.path.slice(dir ? dir.length + 1 : 0);
+      if (dir === d && /^(LICEN[CS]E|COPYING|NOTICE)(\.[a-z]+)?$/i.test(name) && !(name in extras)) extras[name] = e.path;
+    }
   }
   return extras;
 }

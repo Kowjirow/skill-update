@@ -12,6 +12,12 @@
 //   skill-update track <id> --manual [<note>]   never updated by this tool
 //   skill-update track --from-npx [<id>…]       adopt what `npx skills` recorded
 //   skill-update untrack <id>
+//   skill-update diff <id>…               the exact text an update would change [--file <path>] [--stat]
+//   skill-update revert <id>…             put back the version before the last update [--dry-run]
+//   skill-update pin <id>… [--note <why>] keep a skill at its version; unpin <id>… lets it update
+//   skill-update add <url>                copy a new skill from a repository and track it
+//                       [--to <folder>] [--name <name>] [--path <folder in repo>] [--ref <ref>] [--dry-run]
+//   skill-update remind [--every <days>] [--hook]   one line when updates wait, from the last check
 //   skill-update plugins                  Claude Code plugins behind their marketplace
 //
 // Folder names: default and claude = ~/.claude/skills (Claude Code), agents =
@@ -21,12 +27,14 @@
 // Common options: --root <folder> (that folder only), --json, --lang en|fr,
 // --offline (no fetch), --verbose, --exit-code (check: exit 1 when updates exist).
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as core from "./core.mjs";
 import { detectLang, setLang, t } from "./i18n.mjs";
+import { assessRisks } from "./risks.mjs";
 
 const CONFIG_FILE = path.join(core.HOME, "config.json");
 // Where each agent loads personal skills from.
@@ -39,14 +47,23 @@ const ROOT_NAMES = {
 const DEFAULT_ROOT = ROOT_NAMES.default;
 const DEFAULT_IGNORE = ["synced"]; // ~/.claude/skills/synced is managed by claude.ai
 const DEFAULT_LOG_DIR = path.join(core.HOME, "logs");
+const BACKUPS = path.join(core.HOME, "backups");
+const LAST_CHECK = path.join(core.HOME, "last-check.json");
+const REMIND_STATE = path.join(core.HOME, "remind.json");
+const SCRIPT = fileURLToPath(import.meta.url);
 const LOCK_NAME = ".skill-update-lock.json";
-const VALUE_OPTIONS = new Set(["root", "lock", "after-update", "log-dir", "path", "ref", "commit", "lang", "ignore", "remove-root"]);
-const ENTRY_FIELDS = ["type", "note", "source", "ref", "path", "commit", "include", "exclude", "extras", "updatedAt"];
-const STATUS_ORDER = ["update-available", "merge-available", "conflict", "source-missing", "modified", "untracked", "missing", "error", "manual", "linked", "up-to-date"];
+const VALUE_OPTIONS = new Set([
+  "root", "lock", "after-update", "log-dir", "path", "ref", "commit", "lang", "ignore", "remove-root", "file", "to", "name", "every", "note",
+]);
+const ENTRY_FIELDS = ["type", "note", "source", "ref", "path", "commit", "pinned", "include", "exclude", "extras", "updatedAt"];
+const STATUS_ORDER = [
+  "update-available", "merge-available", "conflict", "pinned", "source-missing", "modified", "untracked", "missing", "error", "manual", "linked", "up-to-date",
+];
 const ICON = {
-  "update-available": "⬆️ ", "merge-available": "🔀", conflict: "⚠️ ", "source-missing": "❓", modified: "✏️ ",
+  "update-available": "⬆️ ", "merge-available": "🔀", conflict: "⚠️ ", pinned: "📌", "source-missing": "❓", modified: "✏️ ",
   untracked: "➕", missing: "🕳️ ", error: "❌", manual: "✋", linked: "🔗", "up-to-date": "✅",
 };
+const PENDING = ["update-available", "merge-available", "conflict"];
 const APPLY = new Set(["update", "add", "remove", "merge"]);
 
 const slash = core.slash;
@@ -59,6 +76,8 @@ const knownRoots = () => Object.entries(ROOT_NAMES).filter(([n]) => n !== "defau
 const samePath = (a, b) =>
   process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 const clip = (list, n = 8) => (list.length > n ? `${list.slice(0, n).join(", ")} … (+${list.length - n})` : list.join(", "));
+// Where a skill's files go inside a backup or conflict folder of one run.
+const where = (rootDir, id, dir) => path.join(dir, path.basename(rootDir), ...id.split("/"));
 
 class CliError extends Error {
   constructor(code, vars = {}) {
@@ -233,16 +252,30 @@ function evaluateTracked(item, opts) {
           : "up-to-date";
   const paths = [entry.path ?? "", ...Object.values(entry.extras ?? {})];
   const moved = base && base !== head && status !== "up-to-date" && status !== "modified";
+  // A pinned skill keeps its version: what upstream offers is only reported.
+  const pending = entry.pinned && PENDING.includes(status) ? status : undefined;
   return {
-    status,
+    status: pending ? "pinned" : status,
+    pending,
+    pinned: entry.pinned,
     ...info,
     behind: moved ? core.commitCount(repo, base, head, paths) : undefined,
     log: moved ? core.commitLog(repo, base, head, paths) : undefined,
+    risks: pending ? undefined : risksOf(repo, files),
     files,
     repo,
     local,
     base,
   };
+}
+
+// Risks of the files an update would write, compared with their installed version.
+function risksOf(repo, files) {
+  const changed = files.filter((f) => f.remote && ["update", "add", "merge", "conflict"].includes(f.action));
+  if (!changed.length) return undefined;
+  const blobs = core.readBlobs(repo, changed.flatMap((f) => [f.remote, f.base]));
+  const risks = assessRisks(changed.map((f) => ({ rel: f.rel, before: f.base ? blobs.get(f.base) : null, after: blobs.get(f.remote), mode: f.mode })));
+  return risks.length ? risks : undefined;
 }
 
 function evaluateCheckout(item, opts) {
@@ -269,7 +302,7 @@ function groupFiles(files) {
 
 function publicResult(item, r) {
   const out = { id: item.id, kind: item.kind, status: r.status };
-  for (const k of ["source", "path", "checkout", "target", "note", "error", "npx", "commit", "head", "behind", "ahead", "log"]) {
+  for (const k of ["source", "path", "checkout", "target", "note", "error", "npx", "pinned", "pending", "commit", "head", "behind", "ahead", "log", "risks"]) {
     const v = r[k];
     if (v !== undefined && v !== null && !(Array.isArray(v) && !v.length)) out[k] = v;
   }
@@ -287,6 +320,8 @@ function summarize(skills) {
     updates: count("update-available", "merge-available"),
     conflicts: count("conflict"),
     untracked: count("untracked"),
+    pinned: count("pinned"),
+    risky: skills.filter((x) => x.risks?.some((r) => r.level === "high")).length,
     errors: count("error"),
   };
 }
@@ -379,8 +414,18 @@ function cmdCheck(args, opts, config) {
     root.skills.push(publicResult(item, evaluate(item, opts)));
   }
   for (const root of roots) root.summary = summarize(root.skills);
-  const summary = summarize(roots.flatMap((r) => r.skills));
+  const all = roots.flatMap((r) => r.skills);
+  const summary = summarize(all);
   if (opts["exit-code"] && summary.updates) process.exitCode = 1;
+  // A full, online check is what `remind` reports from.
+  if (!args.length && !opts.offline && !(opts.root && opts.root !== true)) {
+    writeJson(LAST_CHECK, {
+      date: new Date().toISOString(),
+      summary,
+      updates: all.filter((s) => s.status === "update-available" || s.status === "merge-available").map((s) => s.id),
+      risky: all.filter((s) => s.risks?.some((r) => r.level === "high")).map((s) => s.id),
+    });
+  }
   if (opts.json) return print({ roots, summary });
   for (const root of roots) {
     console.log(`\n📦 ${t("check.root", { root: root.path })}  (${t("check.lock", { lock: root.lock })})`);
@@ -396,6 +441,7 @@ function cmdCheck(args, opts, config) {
     }
   }
   console.log(`\n${"━".repeat(40)}\n${t("check.summary", summary)}`);
+  if (summary.risky) console.log(`🛡️  ${t("check.risky", { n: summary.risky })}`);
   if (summary.updates) console.log(t("check.hint.update"));
   if (summary.untracked) console.log(t("check.hint.track"));
 }
@@ -409,9 +455,17 @@ function printSkill(s, opts) {
   if (s.note) line += `  — ${s.note}`;
   if (s.error) line += `  ${s.error}`;
   if (s.npx) line += `  (${t("check.hint.npx")})`;
+  if (s.pending) line += `  (${t(`status.${s.pending}`)})`;
   console.log(line);
   for (const [k, list] of Object.entries(s.files ?? {})) if (k !== "local-only" || opts.verbose) console.log(`       ${t(`files.${k}`)}: ${clip(list)}`);
+  printRisks(s.risks, "       ");
   for (const l of (s.log ?? []).slice(0, opts.verbose ? 15 : 5)) console.log(`       ${l}`);
+}
+
+const riskLine = (r, code = (s) => s) => t("log.item", { label: t(`risk.${r.reason}`), list: `${code(r.rel)}${r.detail ? ` — ${code(r.detail)}` : ""}` });
+
+function printRisks(risks, indent) {
+  for (const r of risks ?? []) console.log(`${indent}🛡️  ${r.level === "high" ? "‼ " : ""}${riskLine(r)}`);
 }
 
 function cmdUpdate(args, opts, config) {
@@ -421,12 +475,11 @@ function cmdUpdate(args, opts, config) {
   if (!args.length) selected = selected.filter((i) => i.kind === "tracked" || i.kind === "checkout");
   const dryRun = !!opts["dry-run"];
   const time = stamp();
-  const report = { date: today(), dryRun, updated: [], conflicts: [], skipped: [], errors: [] };
+  const report = { action: "update", date: today(), dryRun, updated: [], conflicts: [], skipped: [], errors: [] };
   const changedLocks = new Set();
   const doneCheckouts = new Set();
-  const backups = path.join(core.HOME, "backups", time);
+  const backups = path.join(BACKUPS, time);
   const conflictDir = path.join(core.HOME, "conflicts", time);
-  const where = (item, dir) => path.join(dir, path.basename(item.root.path), ...item.id.split("/"));
 
   for (const item of selected) {
     const r = evaluate(item, opts);
@@ -449,14 +502,14 @@ function cmdUpdate(args, opts, config) {
       else report.updated.push(result);
       continue;
     }
-    if (item.kind !== "tracked" || r.status === "source-missing") {
+    if (item.kind !== "tracked" || r.status === "source-missing" || r.status === "pinned") {
       skip(r.status);
       continue;
     }
 
     const conflicts = r.files.filter((f) => f.action === "conflict");
     if (conflicts.length && !opts.ours && !opts.theirs) {
-      const saved = where(item, conflictDir);
+      const saved = where(item.root.path, item.id, conflictDir);
       if (!dryRun) {
         for (const f of conflicts.filter((f) => f.preview)) {
           const file = path.join(saved, ...f.rel.split("/"));
@@ -485,10 +538,22 @@ function cmdUpdate(args, opts, config) {
       files: groupFiles(ops.map((f) => ({ rel: f.rel, action: f.action === "conflict" ? "update" : f.action }))),
       ...(conflicts.length && { resolved: opts.theirs ? "theirs" : "ours", conflicts: conflicts.map((f) => f.rel) }),
       ...(r.log?.length && { log: r.log }),
+      ...(r.risks && { risks: r.risks }),
     };
     if (!dryRun) {
-      const backup = where(item, backups);
+      const backup = where(item.root.path, item.id, backups);
       if (applyOps(item, r, ops, backup)) result.backup = slash(backup);
+      // What `revert` needs to undo this update.
+      writeJson(`${backup}.json`, {
+        id: item.id,
+        root: slash(item.root.path),
+        from: result.from,
+        fromDate: r.base ? core.commitDate(r.repo, r.base) : null,
+        to: r.head,
+        files: result.files,
+        entryBefore: item.entry,
+        date: report.date,
+      });
       item.rootData.lock.skills[item.id] = orderEntry({ ...item.entry, commit: r.head, updatedAt: report.date });
       changedLocks.add(item.rootData);
     }
@@ -498,10 +563,13 @@ function cmdUpdate(args, opts, config) {
   for (const d of changedLocks) writeLock(d.root.lock, d.lock);
   if (report.updated.some((u) => u.backup)) report.backupDir = slash(backups);
   if (report.conflicts.some((c) => c.saved)) report.conflictDir = slash(conflictDir);
-  if (!dryRun && (report.updated.length || report.conflicts.length)) report.logFile = slash(writeUpdateLog(report, config));
-  if (report.logFile && config?.afterUpdate && !opts["no-after-update"]) {
-    report.afterUpdate = runAfterUpdate(config.afterUpdate, report);
-  }
+  finish(report, config, opts);
+}
+
+// Log, after-update command and output, shared by update, revert and add.
+function finish(report, config, opts) {
+  if (!report.dryRun && (report.updated.length || report.conflicts.length)) report.logFile = slash(writeUpdateLog(report, config));
+  if (report.logFile && config?.afterUpdate && !opts["no-after-update"]) report.afterUpdate = runAfterUpdate(config.afterUpdate, report);
   if (opts.json) return print(report);
   printUpdate(report);
 }
@@ -558,7 +626,7 @@ function writeUpdateLog(report, config) {
   const code = (list) => list.map((f) => `\`${f}\``).join(", ");
   const filesCell = (u) =>
     u.checkout ? t("check.commits", { n: u.commits }) : Object.entries(u.files).map(([k, list]) => t("log.item", { label: t(`files.${k}`), list: list.length })).join(", ");
-  const lines = [`## ${t("log.run", { time, n: report.updated.length })}`, ""];
+  const lines = [`## ${t(`log.run.${report.action}`, { time, n: report.updated.length })}`, ""];
   if (report.updated.length) {
     lines.push(`| ${["skill", "source", "from", "to", "date", "files"].map((k) => t(`log.col.${k}`)).join(" | ")} |`, `|${" --- |".repeat(6)}`);
     for (const u of report.updated) {
@@ -568,6 +636,7 @@ function writeUpdateLog(report, config) {
       lines.push("", `### \`${u.id}\``, "");
       for (const [k, list] of Object.entries(u.files ?? {})) lines.push(`- ${t("log.item", { label: t(`files.${k}`), list: code(list) })}`);
       if (u.resolved) lines.push(`- ${t("log.resolved", { files: code(u.conflicts), how: `--${u.resolved}` })}`);
+      for (const r of u.risks ?? []) lines.push(`- 🛡️ ${r.level === "high" ? "**" : ""}${riskLine(r, (s) => `\`\` ${s} \`\``)}${r.level === "high" ? "**" : ""}`);
       if (u.log?.length) lines.push(`- ${t("log.item", { label: t("log.commits"), list: "" }).trim()}`, ...u.log.map((l) => `  - ${l}`));
     }
   }
@@ -594,10 +663,13 @@ function runAfterUpdate(command, report) {
 }
 
 function printUpdate(report) {
+  const done = { update: "update.done", revert: "update.reverted", add: "update.added" }[report.action];
   for (const u of report.updated) {
+    const vars = { id: u.id, from: short(u.from), to: short(u.to), url: u.source, commit: short(u.to) };
     if (u.checkout) console.log(`⬆️  ${t("update.checkout", { id: u.id, n: u.commits })}`);
-    else console.log(`⬆️  ${t(report.dryRun ? "update.dry" : "update.done", { id: u.id, from: short(u.from), to: short(u.to) })}`);
+    else console.log(`⬆️  ${t(report.dryRun ? `${done}.dry` : done, vars)}`);
     for (const [k, list] of Object.entries(u.files ?? {})) console.log(`       ${t(`files.${k}`)}: ${clip(list)}`);
+    printRisks(u.risks, "       ");
   }
   for (const c of report.conflicts) console.log(`⚠️  ${t("update.conflict", { id: c.id, files: c.files ? clip(c.files) : c.error })}`);
   for (const s of report.skipped) console.log(`·  ${t("update.skipped", { id: s.id, reason: t(`status.${s.reason}`) })}`);
@@ -719,6 +791,247 @@ function cmdUntrack(args, opts, config) {
   if (opts.json) print({ untracked: args });
 }
 
+// --- Revert, diff, pin, add, remind ---------------------------------------------------------
+
+// Backups of a skill, newest first, each with the manifest its update wrote.
+function manifests(item) {
+  if (!fs.existsSync(BACKUPS)) return [];
+  return fs
+    .readdirSync(BACKUPS)
+    .sort()
+    .reverse()
+    .map((run) => `${where(item.root.path, item.id, path.join(BACKUPS, run))}.json`)
+    .filter((file) => fs.existsSync(file))
+    .map((file) => ({ ...readJson(file, {}), file, dir: file.slice(0, -".json".length) }))
+    .filter((m) => m.root && samePath(m.root, item.root.path));
+}
+
+const copyFile = (from, to) => {
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.copyFileSync(from, to);
+};
+
+// Puts back the files of the last update not yet reverted. The current files
+// go to a new backup first; files the update added are moved there.
+function cmdRevert(args, opts, config) {
+  if (!args.length) throw new CliError("usage", { usage: "skill-update revert <id>… [--dry-run]" });
+  const data = gather(opts, config);
+  const dryRun = !!opts["dry-run"];
+  const backups = path.join(BACKUPS, stamp());
+  const report = { action: "revert", date: today(), dryRun, updated: [], conflicts: [], skipped: [], errors: [] };
+  const changedLocks = new Set();
+  for (const item of select(data.flatMap((d) => d.items), args)) {
+    const m = manifests(item).find((x) => !x.revertedAt);
+    if (!m) {
+      report.skipped.push({ id: item.id, root: slash(item.root.path), reason: "no-backup" });
+      continue;
+    }
+    const restore = [...(m.files.update ?? []), ...(m.files.merge ?? []), ...(m.files.remove ?? [])];
+    const added = m.files.add ?? [];
+    const result = {
+      id: item.id,
+      root: slash(item.root.path),
+      source: m.entryBefore?.source ?? item.entry?.source,
+      path: m.entryBefore?.path ?? item.entry?.path,
+      from: m.to,
+      to: m.from,
+      toDate: m.fromDate,
+      files: Object.fromEntries(
+        [["update", [...(m.files.update ?? []), ...(m.files.merge ?? [])]], ["add", m.files.remove ?? []], ["remove", added]].filter(([, l]) => l.length),
+      ),
+    };
+    if (!dryRun) {
+      const save = where(item.root.path, item.id, backups);
+      for (const rel of [...restore, ...added]) {
+        const abs = path.join(item.dir, ...rel.split("/"));
+        if (fs.existsSync(abs)) copyFile(abs, path.join(save, ...rel.split("/")));
+      }
+      for (const rel of restore) copyFile(path.join(m.dir, ...rel.split("/")), path.join(item.dir, ...rel.split("/")));
+      for (const rel of added) {
+        const abs = path.join(item.dir, ...rel.split("/"));
+        if (!fs.existsSync(abs)) continue;
+        fs.unlinkSync(abs);
+        removeEmptyDirs(path.dirname(abs), path.dirname(item.dir));
+      }
+      if (fs.existsSync(save)) result.backup = slash(save);
+      if (m.entryBefore) item.rootData.lock.skills[item.id] = orderEntry(m.entryBefore);
+      else delete item.rootData.lock.skills[item.id]; // the skill was added by `add`: it is gone now
+      changedLocks.add(item.rootData);
+      writeJson(m.file, { ...readJson(m.file, {}), revertedAt: new Date().toISOString() });
+    }
+    report.updated.push(result);
+  }
+  for (const d of changedLocks) writeLock(d.root.lock, d.lock);
+  if (report.updated.some((u) => u.backup)) report.backupDir = slash(backups);
+  finish(report, config, opts);
+}
+
+// The exact text an update would change: current file against what it would become.
+function cmdDiff(args, opts, config) {
+  const data = gather(opts, config);
+  const items = select(data.flatMap((d) => d.items), args).filter((i) => i.kind === "tracked");
+  const results = [];
+  for (const item of items) {
+    const r = evaluateTracked(item, opts);
+    const ops = (r.files ?? []).filter((f) => APPLY.has(f.action) || f.action === "conflict");
+    const wanted = typeof opts.file === "string" ? ops.filter((f) => f.rel === opts.file.replace(/\\/g, "/")) : ops;
+    if (!wanted.length) {
+      if (args.length) results.push({ id: item.id, diff: "" });
+      continue;
+    }
+    const blobs = core.readBlobs(r.repo, wanted.map((f) => f.remote));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skill-update-diff-"));
+    const put = (side, rel, buf) => {
+      const file = path.join(tmp, side, ...rel.split("/"));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, core.toEol(buf, false));
+    };
+    try {
+      for (const f of wanted) {
+        const local = r.local.get(f.rel);
+        if (local) put("a", f.rel, local.buf);
+        const after = f.action === "merge" ? f.content : f.action === "conflict" ? f.preview : f.action === "remove" ? null : blobs.get(f.remote);
+        if (after) put("b", f.rel, after);
+      }
+      for (const side of ["a", "b"]) fs.mkdirSync(path.join(tmp, side), { recursive: true });
+      const out = core.git(["diff", "--no-index", "--no-color", "--src-prefix=", "--dst-prefix=", ...(opts.stat ? ["--stat"] : []), "a", "b"], {
+        cwd: tmp,
+        allowFail: true,
+      });
+      results.push({ id: item.id, diff: String(out.stdout) });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  if (opts.json) return print({ diffs: results });
+  for (const r of results) console.log(r.diff ? `━━ ${r.id}\n${r.diff}` : t("diff.none", { id: r.id }));
+}
+
+function cmdPin(args, opts, config, pin) {
+  if (!args.length) throw new CliError("usage", { usage: `skill-update ${pin ? "pin" : "unpin"} <id>… ${pin ? "[--note <why>]" : ""}` });
+  const data = gather(opts, config);
+  const done = [];
+  for (const item of select(data.flatMap((d) => d.items), args)) {
+    if (item.kind !== "tracked") throw new CliError("not-tracked", { id: item.id });
+    const entry = { ...item.entry };
+    if (pin) entry.pinned = typeof opts.note === "string" && opts.note ? opts.note : true;
+    else delete entry.pinned;
+    item.rootData.lock.skills[item.id] = orderEntry(entry);
+    writeLock(item.root.lock, item.rootData.lock);
+    done.push({ id: item.id, pinned: entry.pinned ?? false });
+  }
+  if (opts.json) return print({ pinned: done });
+  for (const d of done) console.log(`📌 ${t(pin ? "pin.done" : "pin.undone", { id: d.id })}`);
+}
+
+// Copies a skill from a repository into the skills folder, with the licence
+// files found beside it or above it, and tracks it at the commit copied.
+function cmdAdd(args, opts, config) {
+  if (!args[0]) throw new CliError("usage", { usage: "skill-update add <url> [--to <folder>] [--name <name>] [--path <folder in repo>] [--ref <ref>] [--dry-run]" });
+  const roots = gather(opts, config);
+  if (roots.length > 1) throw new CliError("choose-root", { list: roots.map((d) => slash(d.root.path)).join(", ") });
+  const [{ root, lock }] = roots;
+  const parsed = core.parseSource(args[0]);
+  const repo = core.openRepo(parsed.url, { fetch: !opts.offline });
+  let ref = typeof opts.ref === "string" ? opts.ref : undefined;
+  let sub = typeof opts.path === "string" ? opts.path : undefined;
+  if (parsed.refPath) {
+    const split = core.splitRefPath(repo, parsed.refPath);
+    ref ??= split.ref;
+    sub ??= split.path;
+  }
+  const head = core.resolveCommit(repo, ref);
+  if (!head) throw new CliError("bad-ref", { ref, url: parsed.url });
+  if (sub === undefined) {
+    const candidates = core.skillPaths(repo, head);
+    if (candidates.length !== 1) throw new CliError("no-skill-path", { url: parsed.url, list: clip(candidates, 15) || "—" });
+    sub = candidates[0];
+  }
+  sub = sub.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/(^|\/)SKILL\.md$/i, "");
+  const tree = core.listTree(repo, head, sub);
+  if (!tree.has("SKILL.md")) throw new CliError("no-skill", { path: sub || "/", url: parsed.url });
+
+  const name = typeof opts.name === "string" ? opts.name : sub.split("/").pop() || parsed.url.replace(/\.git$/, "").split(/[/\\]/).pop();
+  const id = [typeof opts.to === "string" ? opts.to : "", name].join("/").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+  const dir = path.join(root.path, ...id.split("/"));
+  if (fs.existsSync(dir)) throw new CliError("exists", { dir: slash(dir) });
+
+  const extras = Object.fromEntries(Object.entries(core.licenseFiles(repo, head, sub)).filter(([rel]) => !tree.has(rel)));
+  const files = new Map(tree);
+  for (const [rel, up] of Object.entries(extras)) files.set(rel, core.listPaths(repo, head, [up]).get(up));
+  const blobs = core.readBlobs(repo, [...files.values()].map((e) => e.oid));
+  const risks = assessRisks([...files].map(([rel, e]) => ({ rel, before: null, after: blobs.get(e.oid), mode: e.mode })));
+  const dryRun = !!opts["dry-run"];
+  const result = {
+    id,
+    root: slash(root.path),
+    source: parsed.url,
+    path: sub,
+    from: null,
+    to: head,
+    toDate: core.commitDate(repo, head),
+    files: { add: [...files.keys()].sort() },
+    added: true,
+    ...(risks.length && { risks }),
+  };
+  if (!dryRun) {
+    for (const [rel, e] of files) {
+      const abs = path.join(dir, ...rel.split("/"));
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, blobs.get(e.oid));
+      if (e.mode === "100755" && process.platform !== "win32") fs.chmodSync(abs, 0o755);
+    }
+    const entry = orderEntry({
+      source: parsed.url,
+      ref: ref && ref !== "HEAD" ? ref : undefined,
+      path: sub,
+      commit: head,
+      extras: Object.keys(extras).length ? extras : undefined,
+      updatedAt: today(),
+    });
+    lock.skills[id] = entry;
+    writeLock(root.lock, lock);
+    // `revert` on a skill added here takes it out again (into a backup).
+    writeJson(`${where(root.path, id, path.join(BACKUPS, stamp()))}.json`, {
+      id, root: slash(root.path), from: null, fromDate: null, to: head, files: result.files, entryBefore: null, date: today(),
+    });
+  }
+  finish({ action: "add", date: today(), dryRun, updated: [result], conflicts: [], skipped: [], errors: [] }, config, opts);
+}
+
+// One line when updates wait, read from the last full check: fast enough for a
+// session-start hook. When that check is older than --every days (7), a new
+// one starts in the background, for the next time. Never changes a skill.
+function cmdRemind(args, opts, config) {
+  const every = Number(typeof opts.every === "string" ? opts.every : config?.remindEvery ?? 7);
+  let last = null;
+  try {
+    last = readJson(LAST_CHECK, null);
+  } catch {}
+  const age = last?.date ? (Date.now() - Date.parse(last.date)) / 86400000 : Infinity;
+  let refreshing = false;
+  if (age >= every && config?.roots?.length && !opts["no-refresh"]) {
+    let state = {};
+    try {
+      state = readJson(REMIND_STATE, {});
+    } catch {}
+    // One background check at a time: another session may have started one.
+    if (!state.startedAt || Date.now() - Date.parse(state.startedAt) > 3600000) {
+      writeJson(REMIND_STATE, { startedAt: new Date().toISOString() });
+      spawn(process.execPath, [SCRIPT, "check", "--json"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      refreshing = true;
+    }
+  }
+  const ids = last?.updates ?? [];
+  const date = last?.date?.slice(0, 10);
+  if (opts.json && !opts.hook) return print({ updates: ids.length, ids, risky: last?.risky ?? [], checked: date ?? null, refreshing });
+  if (!ids.length) return;
+  const message = t("remind.message", { n: ids.length, date });
+  if (!opts.hook) return console.log(message);
+  const context = t("remind.context", { n: ids.length, date, list: clip(ids, 30), risky: clip(last?.risky ?? [], 30) || "—" });
+  console.log(JSON.stringify({ systemMessage: message, hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } }));
+}
+
 // --- Claude Code plugins ------------------------------------------------------------------
 
 function marketSource(market) {
@@ -810,15 +1123,25 @@ function main() {
   }
   setLang(detectLang(typeof opts.lang === "string" ? opts.lang : undefined, config?.lang));
   if (!command || command === "help" || opts.help) return help();
+  // remind runs in a session-start hook: it stays silent rather than fail.
+  if (command === "remind") {
+    try {
+      cmdRemind(args, opts, config);
+    } catch {}
+    return;
+  }
   if (spawnSync("git", ["--version"]).error) {
     console.error(`❌ ${t("err.git")}`);
     process.exitCode = 2;
     return;
   }
   if (!opts.json) core.hooks.fetch = (url) => process.stderr.write(`· ${url}\n`);
-  const commands = { config: cmdConfig, scan: cmdScan, check: cmdCheck, update: cmdUpdate, track: cmdTrack, untrack: cmdUntrack, plugins: cmdPlugins };
+  const commands = {
+    config: cmdConfig, scan: cmdScan, check: cmdCheck, update: cmdUpdate, track: cmdTrack, untrack: cmdUntrack, diff: cmdDiff, revert: cmdRevert,
+    pin: (a, o, c) => cmdPin(a, o, c, true), unpin: (a, o, c) => cmdPin(a, o, c, false), add: cmdAdd, remind: cmdRemind, plugins: cmdPlugins,
+  };
   try {
-    if (!commands[command]) throw new CliError("usage", { usage: "skill-update <config|scan|check|update|track|untrack|plugins> (--help)" });
+    if (!commands[command]) throw new CliError("usage", { usage: `skill-update <${Object.keys(commands).join("|")}> (--help)` });
     commands[command](args, opts, config);
   } catch (e) {
     if (opts.json) print({ error: e.code ?? "error", message: e.message, ...(e.code === "not-configured" && { defaultRoot: slash(DEFAULT_ROOT), knownRoots: knownRoots() }) });

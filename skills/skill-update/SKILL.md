@@ -1,6 +1,6 @@
 ---
 name: skill-update
-description: Update the skills a user copied from GitHub or any git repository into a skills folder (~/.claude/skills, ~/.agents/skills, a project's skills folder, or any folder, sub-folders included). Checks what changed upstream, merges it with the user's own edits (three-way merge), backs up every replaced file, records where each skill comes from in a lock file and writes a dated log of each update. Also adopts skills installed by `npx skills`, fast-forwards skills that are git clones, and reports Claude Code plugins behind their marketplace. Use when the user asks to update, upgrade, refresh or check their skills, runs /skill-update or $skill-update, or wants to record where a skill comes from.
+description: Update the skills a user copied from GitHub or any git repository into a skills folder (~/.claude/skills, ~/.agents/skills, a project's skills folder, or any folder, sub-folders included). Checks what changed upstream and flags risky changes (new scripts, code downloaded and run, pre-approved tools), shows the exact diff, merges updates with the user's own edits (three-way merge), backs up every replaced file, can undo an update, pin a skill or add a new one, records where each skill comes from and writes a dated log of each update. Also adopts skills installed by `npx skills`, fast-forwards skills that are git clones, and reports Claude Code plugins behind their marketplace. Use when the user asks to update, upgrade, refresh or check their skills, to undo, pin or add a skill, runs /skill-update or $skill-update, or wants to record where a skill comes from.
 license: MIT
 compatibility: Requires Node.js 18+ and git, and network access to the skills' repositories. Works in Claude Code, Codex and other agents that read SKILL.md.
 ---
@@ -54,6 +54,7 @@ The first run clones each source repository into a cache (blobless: commits and 
 | `update-available` | upstream changed, local copy untouched where it changed | offer the update |
 | `merge-available` | upstream and the user changed the same file, in different places | offer the update: the merge keeps both |
 | `conflict` | both changed the same lines | see step 5 |
+| `pinned` | the user pinned it; `pending` says what upstream offers | report only; `unpin` to let it update |
 | `modified` | only the user changed it | nothing; their edits are kept |
 | `up-to-date` | nothing to do | count only |
 | `untracked` | origin unknown | see step 3 |
@@ -64,6 +65,16 @@ The first run clones each source repository into a cache (blobless: commits and 
 | `error` | fetch failed, private repo, bad ref… | show `error` |
 
 Present a short table: skills to update with `commit → head`, the number of upstream commits (`behind`), the files (`files.update`, `add`, `remove`, `merge`), and the commit subjects (`log`). Give only the count of up-to-date skills.
+
+**Risks.** A skill to update may carry `risks`: `{ level, reason, rel, detail }`. `high`: a new script, a line that runs code downloaded from the network (`curl … | sh`, `iex`), a command that wipes a folder, changed `allowed-tools` (tools pre-approved for the agent), a hook or MCP configuration. `medium`: a changed script, `sudo`, a shell profile edit, a changed licence. Only lines the update adds are flagged. List them under the skill, quote `detail` for every `high` one, and offer `su diff <id>` before the user decides. `summary.risky` counts the skills with a `high` risk.
+
+To see the exact text an update would change (nothing is written):
+
+```bash
+su diff <id> --json                    # unified diff: current file → after the update
+su diff <id> --file <path> --json      # one file
+su diff <id> --stat --json             # files and line counts only
+```
 
 ## 3. Track untracked skills
 
@@ -81,7 +92,7 @@ su track <id> --manual "<why>" --json           # generated or hand-made: never 
 
 ## 4. Update, only with consent
 
-Updated skills bring new instructions and sometimes new scripts that will run with the agent's permissions. Show what changes (step 2), then ask: **Update all** / **Choose** (which skill ids) / **Cancel**. Never update without that answer.
+Updated skills bring new instructions and sometimes new scripts that will run with the agent's permissions. Show what changes and its risks (step 2), then ask: **Update all** / **Choose** (which skill ids) / **Cancel**. Never update without that answer; a skill with a `high` risk is updated only if the user names it after seeing the risk.
 
 ```bash
 su update --all --json
@@ -103,7 +114,38 @@ A skill with a conflict is not touched at all. Its merge, with `<<<<<<<` markers
 - **Take upstream**: `su update <id> --theirs --json` (their version is in the backup).
 - **Merge by hand**: write the merged content into the skill's file yourself (no markers left), show it, then `su update <id> --ours --json`.
 
-## 6. Plugins and `npx skills`
+## 6. Undo, pin
+
+```bash
+su revert <id> --json                  # put back the version before the last update
+su revert <id> --dry-run --json        # what it would put back
+su pin <id> --note "<why>" --json      # keep a skill at its version (a client project, a known-good state)
+su unpin <id> --json
+```
+
+`revert` restores the files the last update replaced or removed, moves the files it added to a new backup, and puts the lock entry back; run it again to go one update further back. It also undoes an `add`: the skill leaves the folder (into a backup) and the lock. `status.no-backup` in `skipped` means there is nothing left to undo. A reverted skill shows as `update-available` again: pin it if the user wants to stay there.
+
+## 7. Add a new skill
+
+```bash
+su add <url> --to <folder> --dry-run --json      # first: files, licence, risks
+su add <url> --to <folder> --json                # then, with the user's consent
+```
+
+`<url>` is a repository or, best, the skill's folder on GitHub (`…/tree/<branch>/<path>`); `--path` names the folder when the repository holds several skills (the error lists them), `--name` renames the copy, `--to` is the sub-folder of the skills folder (a domain like `video`). The copy takes along the licence files found beside it or higher up in the repository, and is tracked at the commit copied. Show the dry run with its `risks` first, as for an update. Afterwards, tell the user what else their own setup expects for a new skill (an index, a profile…), if they have such rules.
+
+## 8. Reminder
+
+```bash
+su remind                              # one line if updates wait, nothing otherwise
+```
+
+`remind` reads the last full `check` (`~/.claude/skill-update/last-check.json`): it is instant and never changes a skill. When that check is older than 7 days (`--every <days>`), it starts a new one in the background, for next time. Only when the user asks for a reminder, set it up:
+
+- **Claude Code**: a `SessionStart` hook in `~/.claude/settings.json` running `node "<this skill's folder>/scripts/skill-update.mjs" remind --hook`. It prints the hook JSON: a message for the user and context for you. When you get that context, mention the updates once and offer `/skill-update`; do not update on your own.
+- **Codex and others**: no session hook; suggest running `su remind` or `su check` now and then, or a scheduled task if the agent has one.
+
+## 9. Plugins and `npx skills`
 
 ```bash
 su plugins --json
@@ -117,7 +159,7 @@ Skills installed by `npx skills` show `npx` in `check`. Either adopt them (`trac
 
 - In a sandboxed agent (Codex's default sandbox), `check`, `track` and `update` need network access (git fetch) and write access to the skills folder and to `~/.claude/skill-update/` or `~/.agents/skill-update/`. When the sandbox refuses, ask the user to approve the command with those permissions; do not work around it.
 - Never delete a skill or a file outright: removed files go to the backup folder.
-- Do not edit the lock file by hand; use `track` and `untrack <id>`.
+- Do not edit the lock file by hand; use `track`, `untrack`, `pin` and `unpin`.
 - Config, cache, backups, conflict files and logs live in `~/.claude/skill-update/` (`~/.agents/skill-update/` without Claude Code; `SKILL_UPDATE_HOME` overrides it).
 - `check --exit-code` exits with 1 when updates exist, for scripts and CI.
 - Lock file format and fields: `references/lockfile.md`.

