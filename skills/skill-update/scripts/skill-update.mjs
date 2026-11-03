@@ -499,7 +499,7 @@ function cmdUpdate(args, opts, config) {
   if (report.updated.some((u) => u.backup)) report.backupDir = slash(backups);
   if (report.conflicts.some((c) => c.saved)) report.conflictDir = slash(conflictDir);
   if (!dryRun && (report.updated.length || report.conflicts.length)) report.logFile = slash(writeUpdateLog(report, config));
-  if (!dryRun && report.updated.length && config?.afterUpdate && !opts["no-after-update"]) {
+  if (report.logFile && config?.afterUpdate && !opts["no-after-update"]) {
     report.afterUpdate = runAfterUpdate(config.afterUpdate, report);
   }
   if (opts.json) return print(report);

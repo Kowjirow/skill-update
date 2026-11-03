@@ -97,7 +97,7 @@ A second run the same day appends its own `##` section. The report gives the fil
 
 ## After-update command
 
-When `afterUpdate` is set, `update` runs it through the shell after writing, with the report as JSON on standard input:
+When `afterUpdate` is set, `update` runs it through the shell after each run that wrote the log (something updated, or a conflict), with the report as JSON on standard input:
 
 ```json
 {
