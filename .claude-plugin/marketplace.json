@@ -7,7 +7,7 @@
     {
       "name": "skill-update",
       "source": "./",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Keep skills copied from git repositories up to date in any folder: finds where each came from, flags risky changes, merges your own edits, backs up every replaced file and logs every update."
     }
   ]
