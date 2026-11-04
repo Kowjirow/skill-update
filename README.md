@@ -57,9 +57,11 @@ Most skills are installed by copying a folder from a repository into `~/.claude/
 
 ```
 skills/skill-update/
-├── SKILL.md                  the procedure, the subcommands and the rules the agent follows
+├── SKILL.md                  the procedure, the subcommands, the report layouts and the rules
+├── README.md                 what it does, requirements and settings, for whoever installs it
 ├── agents/openai.yaml        display name and default prompt for Codex
 ├── references/lockfile.md    formats: lock file, config, update log, risks, after-update report
+├── examples/                 a sample check report, update report and dated log page
 └── scripts/
     ├── skill-update.mjs      the command line behind every subcommand
     ├── core.mjs              git plumbing, file fingerprints, the three-way plan and merge

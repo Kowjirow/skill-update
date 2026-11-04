@@ -90,7 +90,24 @@ The first run clones each source repository into a cache (blobless: commits and 
 | `missing` | in the lock file, not on disk | ask whether to `untrack` it |
 | `error` | fetch failed, private repo, bad ref… | show `error` |
 
-Present a short table: skills to update with `commit → head`, the number of upstream commits (`behind`), the files (`files.update`, `add`, `remove`, `merge`), and the commit subjects (`log`). Give only the count of up-to-date skills.
+Report the check with exactly this layout, labels translated into the user's language (a full sample: `examples/check-report.md`):
+
+```markdown
+**<total> skills checked · <updates> to update · <conflicts> in conflict · <untracked> not tracked**
+
+| Skill | Version | Upstream commits | Files | To review |
+| --- | --- | --- | --- | --- |
+| `<id>` | `<commit> → <head>` (8 characters each) | <behind> | <count> updated, <count> merged, <count> added, <count> removed | ‼ <high risk and its file>, or — |
+
+- **Changes upstream:** for each skill above, its `log` lines (at most 5, then "… and N more").
+- **Your own edits, kept:** `<id>` (<files.modified>) — one line per `modified` skill.
+- **Pinned:** `<id>` — <note>, <pending>.
+- **Not tracked:** `<id>`, … → `find` (step 3).
+- **Errors:** `<id>`: <error>.
+- **Up to date:** <count>.
+```
+
+Leave out a line or the table when it has nothing. One row per skill to update (`update-available`, `merge-available`, `conflict`); never list up-to-date skills one by one.
 
 **Risks.** A skill to update may carry `risks`: `{ level, reason, rel, detail }`. `high`: a new script, a line that runs code downloaded from the network (`curl … | sh`, `iex`), a command that wipes a folder, changed `allowed-tools` (tools pre-approved for the agent), a hook or MCP configuration. `medium`: a changed script, `sudo`, a shell profile edit, a changed licence. Only lines the update adds are flagged. List them under the skill, quote `detail` for every `high` one, and offer `su diff <id>` before the user decides. `summary.risky` counts the skills with a `high` risk.
 
@@ -135,7 +152,16 @@ su update <id> <id>… --json
 su update <id> --dry-run --json                 # to show the plan without writing
 ```
 
-For each file: taken from upstream when the user had not touched it, merged when both changed it, moved to the backup when deleted upstream, left alone when only the user changed it. Every replaced or removed file is first copied to `backupDir`. The lock file records the new commit. Report `updated` (with `files`), `backupDir`, `conflicts`, `skipped`, `errors`, and `afterUpdate` if present (a command the user configured to run after each update; relay its output).
+For each file: taken from upstream when the user had not touched it, merged when both changed it, moved to the backup when deleted upstream, left alone when only the user changed it. Every replaced or removed file is first copied to `backupDir`. The lock file records the new commit. Report it with exactly this layout, labels translated (sample: `examples/update-report.md`):
+
+```markdown
+**<n> skills updated** · backups: `<backupDir>` · log: `<logFile>`
+
+- `<id>` `<from> → <to>`: <count> updated, <count> merged (your edits kept), <count> added, <count> removed
+- **Not updated, conflict:** `<id>` in <files> → step 5
+- **Skipped:** `<id>` (<reason>) · **Errors:** `<id>`: <error>
+- **After-update command:** <afterUpdate.command> → exit <code>; its output, if any.
+```
 
 Every update that changes something is also listed in a dated Markdown file, `logFile` in the JSON: `<log folder>/<YYYY-MM-DD>.md`, one section per run of the day, with a table of the skills updated (before and after commits, commit date, files) and, for each skill, its files and upstream commits; conflicts and errors follow. Give the user its path. The log folder is `logDir` in `config --json`; `su config --log-dir "<folder>"` moves it (into a notes vault, a repository…).
 
@@ -197,4 +223,4 @@ Skills installed by `npx skills` show `npx` in `check`. Either adopt them (`trac
 - Do not edit the lock file by hand; use `track`, `untrack`, `pin` and `unpin`.
 - Config, cache, backups, conflict files and logs live in `~/.claude/skill-update/` (`~/.agents/skill-update/` without Claude Code; `SKILL_UPDATE_HOME` overrides it).
 - `check --exit-code` exits with 1 when updates exist, for scripts and CI.
-- Lock file format and fields: `references/lockfile.md`.
+- Lock file format and fields: `references/lockfile.md`. Sample reports and a dated log page: `examples/`.

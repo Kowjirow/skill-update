@@ -57,9 +57,11 @@ La plupart des skills s'installent en copiant un dossier d'un dépôt dans `~/.c
 
 ```
 skills/skill-update/
-├── SKILL.md                  la procédure, les sous-commandes et les règles que suit l'agent
+├── SKILL.md                  la procédure, les sous-commandes, les gabarits de compte rendu et les règles
+├── README.md                 ce qu'elle fait, prérequis et réglages, pour qui l'installe
 ├── agents/openai.yaml        nom affiché et invite par défaut pour Codex
 ├── references/lockfile.md    formats : fichier de suivi, configuration, journal, risques, rapport
+├── examples/                 un compte rendu de vérification, de mise à jour, et une page de journal
 └── scripts/
     ├── skill-update.mjs      la ligne de commande derrière chaque sous-commande
     ├── core.mjs              accès git, empreintes des fichiers, plan et fusion à trois voies
