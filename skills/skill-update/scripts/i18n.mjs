@@ -120,6 +120,8 @@ const MESSAGES = {
     "err.exists": "{dir} already exists: choose another --name or --to.",
     "err.choose-root": "Several skills folders are configured ({list}): pass --root <folder>.",
     "err.no-skill": "No SKILL.md under {path} in {url}.",
+    "err.outside": "Refused: {path} leads outside {dir}. Nothing was written for this skill.",
+    "err.after-update": "Cannot read the after-update command `{cmd}` (empty, or a quote not closed).",
   },
   fr: {
     "status.up-to-date": "À jour",
@@ -238,6 +240,8 @@ const MESSAGES = {
     "err.exists": "{dir} existe déjà : choisir un autre --name ou --to.",
     "err.choose-root": "Plusieurs dossiers de skills sont configurés ({list}) : préciser --root <dossier>.",
     "err.no-skill": "Aucun SKILL.md sous {path} dans {url}.",
+    "err.outside": "Refusé : {path} sort de {dir}. Rien n'a été écrit pour cette skill.",
+    "err.after-update": "Commande d'après mise à jour illisible : `{cmd}` (vide, ou guillemet non fermé).",
   },
 };
 

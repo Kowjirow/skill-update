@@ -117,6 +117,33 @@ Options communes : `--json` (sortie lisible par une machine), `--dry-run` (n'éc
   { "type": "command", "command": "node \"<chemin>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }
   ```
 
+## Sécurité
+
+Ce que le script lit, écrit, envoie et lance.
+
+- **Lit :**
+  - les dossiers de skills réglés avec `config`, et leurs fichiers de suivi ;
+  - son dossier d'état `~/.claude/skill-update/` (`~/.agents/skill-update/` sans Claude Code, ou `SKILL_UPDATE_HOME`) ;
+  - `~/.agents/.skill-lock.json` (ou `$XDG_STATE_HOME/skills/.skill-lock.json`), écrit par `npx skills` ;
+  - `~/.claude/plugins/installed_plugins.json` et `known_marketplaces.json`, pour `plugins` et `find`.
+- **Écrit :**
+  - dans un dossier de skills : seulement les fichiers de la skill mise à jour, ajoutée ou rétablie, et le fichier de suivi du dossier. Chaque chemin est vérifié avant la première écriture. Un nom de fichier venu d'un dépôt qui sort du dossier de la skill est refusé : `../`, chemin absolu, lien vers ailleurs. Rien n'est alors écrit pour cette skill ;
+  - une skill qui est elle-même un clone git avance par git (`git merge --ff-only`) ;
+  - son dossier d'état : réglages, cache de clones git nus, sauvegardes, fichiers de conflit, journaux, dernier contrôle ;
+  - le dossier de journal réglé avec `config --log-dir`, s'il y en a un.
+- **Réseau :**
+  - récupérations git vers les dépôts suivis, ceux donnés à `add`, `track` et `find`, et les marketplaces de plugins (`plugins`) ;
+  - `find` n'envoie que le nom d'une skill à `https://skills.sh/api/search`, avec un propriétaire quand les liens de la skill en nomment un.
+
+  `--offline` ne récupère rien ; `find --no-search` saute l'annuaire.
+- **Lance :**
+  - git ;
+  - votre commande `afterUpdate`, seulement si vous l'avez réglée. Elle démarre directement, sans shell : `&&`, `|`, `;` et `>` sont de simples arguments. L'agent ne la règle jamais de lui-même ;
+  - `remind --hook` lance un `check` en arrière-plan.
+
+  Il ne lance jamais un script contenu dans une skill.
+- **Jamais :** aucune installation de paquet, aucun `sudo`, aucune télémétrie, aucune modification des réglages de l'agent (`settings.json`, hooks, serveurs MCP, permissions). Pour les plugins, il affiche seulement la commande `claude plugin` à lancer.
+
 ## Licence
 
 MIT — voir [LICENSE](LICENSE).

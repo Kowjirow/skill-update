@@ -275,6 +275,80 @@ test("the after-update command receives the report", () => {
   assert.match(report.updated[0].toDate, /^\d{4}-\d{2}-\d{2}$/);
 });
 
+test("the after-update command runs without a shell: && and > are plain arguments", () => {
+  const s = tracked();
+  const hook = path.join(s.dir, "hook.mjs");
+  const args = path.join(s.dir, "hook-args.json");
+  const marker = path.join(s.dir, "chained.txt");
+  fs.writeFileSync(hook, `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(args)}, JSON.stringify(process.argv.slice(2)));`);
+  const command = `"${process.execPath}" '${hook}' "two words" && echo chained > "${marker}"`;
+  s.run(["config", "--root", s.root, "--after-update", command], { root: false });
+  s.commit({ "skills/demo/notes.md": "notes v2\n" });
+  const up = s.run(["update", "--all"], { root: false }).out;
+  assert.equal(up.afterUpdate.code, 0, up.afterUpdate.output);
+  assert.deepEqual(JSON.parse(fs.readFileSync(args, "utf8")), ["two words", "&&", "echo", "chained", ">", marker]);
+  assert.equal(fs.existsSync(marker), false);
+
+  s.run(["config", "--root", s.root, "--after-update", `"${process.execPath}`], { root: false });
+  s.commit({ "skills/demo/notes.md": "notes v3\n" });
+  const bad = s.run(["update", "--all"], { root: false }).out;
+  assert.equal(bad.afterUpdate.code, null);
+  assert.match(bad.afterUpdate.output, /quote not closed/);
+});
+
+// An upstream commit whose skill folder holds a crafted `..` folder: git
+// itself refuses to check such a tree out, but a bare clone stores it.
+function craftedEscape(s) {
+  const blob = (text) => spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: s.upstream, input: text, encoding: "utf8" }).stdout.trim();
+  const mktree = (lines) => spawnSync("git", ["mktree"], { cwd: s.upstream, input: lines.join("\n") + "\n", encoding: "utf8" }).stdout.trim();
+  const entries = (spec) => git(s.upstream, "ls-tree", spec).split("\n");
+  const swap = (lines, name, oid) => lines.map((l) => (l.endsWith(`\t${name}`) ? `040000 tree ${oid}\t${name}` : l));
+  const up = mktree([`100644 blob ${blob("escaped\n")}\tescape.txt`]);
+  const demo = mktree([...entries("HEAD:skills/demo"), `040000 tree ${up}\t..`]);
+  const skills = mktree(swap(entries("HEAD:skills"), "demo", demo));
+  const root = mktree(swap(entries("HEAD"), "skills", skills));
+  const commit = git(s.upstream, "commit-tree", root, "-p", "HEAD", "-m", "crafted");
+  git(s.upstream, "update-ref", "refs/heads/main", commit);
+  return commit;
+}
+
+test("a file name from the repository cannot write outside the skill folder", () => {
+  const s = tracked();
+  craftedEscape(s);
+  const before = read(s.root, "design/demo/notes.md");
+  const up = s.run(["update", "design/demo"]).out;
+  assert.equal(up.updated.length, 0);
+  assert.equal(up.errors[0].id, "design/demo");
+  assert.match(up.errors[0].error, /leads outside/);
+  assert.equal(fs.existsSync(path.join(s.root, "design", "escape.txt")), false);
+  assert.equal(read(s.root, "design/demo/notes.md"), before);
+
+  const add = s.run(["add", s.upstream, "--path", "skills/demo", "--to", "web"]).out;
+  assert.equal(add.error, "outside");
+  assert.equal(fs.existsSync(path.join(s.root, "web")), false);
+  assert.equal(fs.existsSync(path.join(s.root, "escape.txt")), false);
+});
+
+test("add and revert refuse a name or a backup list that leads outside", () => {
+  const s = sandbox(DEMO);
+  const add = s.run(["add", s.upstream, "--path", "skills/demo", "--name", "../../escaped"]).out;
+  assert.equal(add.error, "outside");
+  assert.equal(fs.existsSync(path.join(s.dir, "escaped")), false);
+
+  const t = tracked();
+  t.commit({ "skills/demo/notes.md": "notes v2\n" });
+  t.run(["update", "design/demo"]);
+  const backups = path.join(t.home, "backups");
+  const manifest = fs.readdirSync(backups, { recursive: true }).map((f) => path.join(backups, f)).find((f) => f.endsWith("demo.json"));
+  const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  m.files.update = ["../../../outside.txt"];
+  fs.writeFileSync(manifest, JSON.stringify(m));
+  const rev = t.run(["revert", "design/demo"]).out;
+  assert.equal(rev.updated.length, 0);
+  assert.match(rev.errors[0].error, /leads outside/);
+  assert.equal(read(t.root, "design/demo/notes.md"), "notes v2\n");
+});
+
 test("--dry-run writes nothing", () => {
   const s = tracked();
   s.commit({ "skills/demo/notes.md": "notes v2\n" });
@@ -388,6 +462,21 @@ test("SKILL.md lists every command of the script as a subcommand", () => {
   const listed = [...section.matchAll(/^\| `(\w+)/gm)].map((m) => m[1]);
   assert.deepEqual([...commands].sort(), [...listed].sort());
   assert.match(skill, /^argument-hint: ".+"$/m);
+});
+
+test("SKILL.md and the READMEs declare what the script touches; the agent never sets afterUpdate", () => {
+  const repo = fileURLToPath(new URL("..", import.meta.url));
+  const doc = (...p) => fs.readFileSync(path.join(repo, ...p), "utf8");
+  const skill = doc("skills", "skill-update", "SKILL.md");
+  assert.match(skill, /Never propose, set or change `afterUpdate`/);
+  for (const [text, title, words] of [
+    [skill, "## Security", ["**Reads:**", "**Writes:**", "**Network:**", "**Runs:**", "**Never:**", "skills.sh", "telemetry", "sudo"]],
+    [doc("README.md"), "## Security", ["**Reads:**", "**Writes:**", "**Network:**", "**Never:**", "skills.sh", "telemetry", "sudo"]],
+    [doc("README.fr.md"), "## Sécurité", ["**Lit :**", "**Écrit :**", "**Réseau :**", "**Jamais :**", "skills.sh", "télémétrie", "sudo"]],
+  ]) {
+    assert.ok(text.includes(title), title);
+    for (const w of words) assert.ok(text.slice(text.indexOf(title)).includes(w), `${title}: ${w}`);
+  }
 });
 
 test("config knows each agent's folder; without Claude Code, state goes to ~/.agents", () => {

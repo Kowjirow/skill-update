@@ -221,6 +221,34 @@ Skills installed by `npx skills` show `npx` in `check`. Either adopt them (`trac
 - In a sandboxed agent (Codex's default sandbox), `check`, `track` and `update` need network access (git fetch) and write access to the skills folder and to `~/.claude/skill-update/` or `~/.agents/skill-update/`. When the sandbox refuses, ask the user to approve the command with those permissions; do not work around it.
 - Never delete a skill or a file outright: removed files go to the backup folder.
 - Do not edit the lock file by hand; use `track`, `untrack`, `pin` and `unpin`.
+- Never propose, set or change `afterUpdate` (`config --after-update`) on your own: it runs a command after every update. Set it only when the user asks for it, with the exact command they give, and show the saved command back to them.
 - Config, cache, backups, conflict files and logs live in `~/.claude/skill-update/` (`~/.agents/skill-update/` without Claude Code; `SKILL_UPDATE_HOME` overrides it).
 - `check --exit-code` exits with 1 when updates exist, for scripts and CI.
 - Lock file format and fields: `references/lockfile.md`. Sample reports and a dated log page: `examples/`.
+
+## Security
+
+What the script reads, writes, sends and runs, for users, reviewers and scanners.
+
+- **Reads:**
+  - the skills folders set with `config`, and their lock files;
+  - its state folder `~/.claude/skill-update/` (`~/.agents/skill-update/` without Claude Code, or `SKILL_UPDATE_HOME`);
+  - `~/.agents/.skill-lock.json` (or `$XDG_STATE_HOME/skills/.skill-lock.json`), written by `npx skills`, to adopt those skills;
+  - `~/.claude/plugins/installed_plugins.json` and `known_marketplaces.json`, for `plugins` and `find`.
+- **Writes:**
+  - in a skills folder: only the files of the skill being updated, added or reverted, and the folder's lock file. Every path is checked before the first write: a file name from a repository that leads outside the skill's folder (`../`, an absolute path, a link to elsewhere) is refused, and nothing is written for that skill;
+  - a skill that is itself a git clone is fast-forwarded by git (`git merge --ff-only`);
+  - its state folder: `config.json`, `cache/` (bare git clones), `backups/`, `conflicts/`, `logs/`, `last-check.json`, `remind.json`;
+  - the log folder set with `config --log-dir`, if any.
+- **Network:**
+  - git fetches from the repositories tracked, from those given to `add`, `track` and `find`, and from plugin marketplaces (`plugins`);
+  - `find` sends only a skill's name, with an owner when the skill's own links name one, to `https://skills.sh/api/search`.
+
+  `--offline` fetches nothing; `find --no-search` skips the index.
+- **Runs:**
+  - git;
+  - the `afterUpdate` command, only when the user set it. It starts directly, without a shell: `&&`, `|`, `;` and `>` are plain arguments;
+  - `remind --hook` starts a `check` in the background.
+
+  It never runs a script that a skill contains.
+- **Never:** installs a package, runs `sudo`, sends telemetry, or changes the agent's settings (`settings.json`, hooks, MCP servers, permissions). For plugins it only prints the `claude plugin` command to run.

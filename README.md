@@ -117,6 +117,33 @@ Common options: `--json` (machine-readable output), `--dry-run` (write nothing),
   { "type": "command", "command": "node \"<path>/skills/skill-update/scripts/skill-update.mjs\" remind --hook", "timeout": 10 }
   ```
 
+## Security
+
+What the script reads, writes, sends and runs.
+
+- **Reads:**
+  - the skills folders you set with `config`, and their lock files;
+  - its state folder `~/.claude/skill-update/` (`~/.agents/skill-update/` without Claude Code, or `SKILL_UPDATE_HOME`);
+  - `~/.agents/.skill-lock.json` (or `$XDG_STATE_HOME/skills/.skill-lock.json`), written by `npx skills`;
+  - `~/.claude/plugins/installed_plugins.json` and `known_marketplaces.json`, for `plugins` and `find`.
+- **Writes:**
+  - in a skills folder: only the files of the skill being updated, added or reverted, and the folder's lock file. Every path is checked before the first write: a file name from a repository that leads outside the skill's folder (`../`, an absolute path, a link to elsewhere) is refused, and nothing is written for that skill;
+  - a skill that is itself a git clone is fast-forwarded by git (`git merge --ff-only`);
+  - its state folder: config, cache of bare git clones, backups, conflict files, logs, last check;
+  - the log folder you set with `config --log-dir`, if any.
+- **Network:**
+  - git fetches from the repositories tracked, from those you give to `add`, `track` and `find`, and from plugin marketplaces (`plugins`);
+  - `find` sends only a skill's name, with an owner when the skill's own links name one, to `https://skills.sh/api/search`.
+
+  `--offline` fetches nothing; `find --no-search` skips the index.
+- **Runs:**
+  - git;
+  - your `afterUpdate` command, only if you set it. It starts directly, without a shell: `&&`, `|`, `;` and `>` are plain arguments. The agent never sets it on its own;
+  - `remind --hook` starts a `check` in the background.
+
+  It never runs a script that a skill contains.
+- **Never:** installs a package, runs `sudo`, sends telemetry, or changes your agent's settings (`settings.json`, hooks, MCP servers, permissions). For plugins it only prints the `claude plugin` command to run.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

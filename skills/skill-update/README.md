@@ -31,6 +31,12 @@ Everything is set with `node scripts/skill-update.mjs config`:
 
 Config, cache, backups and logs live in `~/.claude/skill-update/` (`~/.agents/skill-update/` without Claude Code; `SKILL_UPDATE_HOME` moves it).
 
+The after-update command runs without a shell, and only when you set it: your agent never sets it on its own.
+
+## Security
+
+No package install, no `sudo`, no telemetry, no change to your agent's settings. The network is used only for git fetches from the skills' repositories and, for `find`, to send a skill's name to the skills.sh index. Writes stay inside the skill being updated: a file name from a repository that leads outside its folder is refused. The full list of what is read, written, sent and run is in the `Security` section of `SKILL.md`.
+
 ## Files
 
 - `SKILL.md` — what the agent follows.

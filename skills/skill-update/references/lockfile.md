@@ -115,7 +115,7 @@ These are prompts to look, not verdicts: `diff` shows the lines.
 
 ## After-update command
 
-When `afterUpdate` is set, `update` runs it through the shell after each run that wrote the log (something updated, or a conflict), with the report as JSON on standard input:
+When `afterUpdate` is set, `update` runs it after each run that wrote the log (something updated, or a conflict), with the report as JSON on standard input. It runs without a shell: the line is split into a program and its arguments (`"double"` and `'single'` quotes group words), so `&&`, `|`, `;`, `>` and `$VAR` are passed as plain arguments. To chain several steps, write a script and point `afterUpdate` at it. On Windows, name a real program (`node`, `git`, `python`); a `.cmd` wrapper such as `npx` needs its full command (`node <path to npx-cli.js>`).
 
 ```json
 {

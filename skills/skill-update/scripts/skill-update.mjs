@@ -96,6 +96,28 @@ class CliError extends Error {
   }
 }
 
+// A path with its links resolved, even when its end does not exist yet: the
+// nearest existing folder is resolved and the rest is added back.
+function realish(p) {
+  let existing = path.resolve(p);
+  while (!fs.existsSync(existing) && path.dirname(existing) !== existing) existing = path.dirname(existing);
+  return path.join(fs.realpathSync.native(existing), path.relative(existing, path.resolve(p)));
+}
+
+// The absolute path of `rel` under `base`, refused when it leads out of `base`.
+// File names come from repositories: a crafted name such as ../../.bashrc, an
+// absolute path or a link inside the folder that points elsewhere must never
+// let this tool write or delete outside the skill's own folder.
+function inside(base, rel) {
+  const abs = path.resolve(base, ...String(rel).split(/[\\/]/));
+  const out = (from, to) => {
+    const r = path.relative(from, to);
+    return !r || r === ".." || r.startsWith(`..${path.sep}`) || path.isAbsolute(r);
+  };
+  if (out(path.resolve(base), abs) || out(realish(base), realish(abs))) throw new CliError("outside", { path: rel, dir: slash(base) });
+  return abs;
+}
+
 // --- Arguments, files ----------------------------------------------------------
 
 function parseArgs(argv) {
@@ -532,7 +554,7 @@ function cmdUpdate(args, opts, config) {
       const saved = where(item.root.path, item.id, conflictDir);
       if (!dryRun) {
         for (const f of conflicts.filter((f) => f.preview)) {
-          const file = path.join(saved, ...f.rel.split("/"));
+          const file = inside(saved, f.rel);
           fs.mkdirSync(path.dirname(file), { recursive: true });
           fs.writeFileSync(file, f.preview);
         }
@@ -542,6 +564,13 @@ function cmdUpdate(args, opts, config) {
     }
 
     const ops = r.files.filter((f) => APPLY.has(f.action) || (f.action === "conflict" && opts.theirs));
+    try {
+      for (const f of ops) inside(item.dir, f.rel); // every path is checked before anything is written
+    } catch (e) {
+      if (e.code !== "outside") throw e;
+      report.errors.push({ ...id, error: e.message });
+      continue;
+    }
     // Nothing to write: only record the commit when it was unknown or when a
     // conflict was settled with --ours, so the conflict does not come back.
     if (!ops.length && r.base && !conflicts.length) {
@@ -600,10 +629,10 @@ function applyOps(item, r, ops, backup) {
   const blobs = core.readBlobs(r.repo, ops.filter((f) => f.action !== "merge" && f.action !== "remove").map((f) => f.remote));
   let backedUp = false;
   for (const f of ops) {
-    const abs = path.join(item.dir, ...f.rel.split("/"));
+    const abs = inside(item.dir, f.rel);
     const local = r.local.get(f.rel);
     if (local) {
-      const copy = path.join(backup, ...f.rel.split("/"));
+      const copy = inside(backup, f.rel);
       fs.mkdirSync(path.dirname(copy), { recursive: true });
       fs.copyFileSync(abs, copy);
       backedUp = true;
@@ -677,9 +706,44 @@ function writeUpdateLog(report, config) {
   return file;
 }
 
+// Splits a command line into a program and its arguments. "Double" and
+// 'single' quotes group words; a backslash is an ordinary character, so
+// Windows paths need no escaping. Returns null when a quote is not closed.
+function splitCommand(line) {
+  const args = [];
+  let word = "";
+  let started = false;
+  let quote = null;
+  for (const ch of String(line)) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else word += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+    } else if (/\s/.test(ch)) {
+      if (started) args.push(word);
+      word = "";
+      started = false;
+    } else {
+      word += ch;
+      started = true;
+    }
+  }
+  if (quote) return null;
+  if (started) args.push(word);
+  return args;
+}
+
+// Runs the after-update command without a shell: the program is started
+// directly, so &&, |, ;, > and $VAR are passed as plain arguments and cannot
+// chain a hidden second command.
 function runAfterUpdate(command, report) {
-  const r = spawnSync(command, { shell: true, input: JSON.stringify(report), encoding: "utf8", windowsHide: true });
-  return { command, code: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().slice(-2000) };
+  const [program, ...args] = splitCommand(command) ?? [];
+  if (!program) return { command, code: null, output: t("err.after-update", { cmd: command }) };
+  const r = spawnSync(program, args, { input: JSON.stringify(report), encoding: "utf8", windowsHide: true });
+  const output = r.error ? r.error.message : `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  return { command, code: r.status, output: output.trim().slice(-2000) };
 }
 
 function printUpdate(report) {
@@ -934,15 +998,22 @@ function cmdRevert(args, opts, config) {
         [["update", [...(m.files.update ?? []), ...(m.files.merge ?? [])]], ["add", m.files.remove ?? []], ["remove", added]].filter(([, l]) => l.length),
       ),
     };
+    try {
+      for (const rel of [...restore, ...added]) inside(item.dir, rel), inside(m.dir, rel); // checked before anything is written
+    } catch (e) {
+      if (e.code !== "outside") throw e;
+      report.errors.push({ id: item.id, root: slash(item.root.path), error: e.message });
+      continue;
+    }
     if (!dryRun) {
       const save = where(item.root.path, item.id, backups);
       for (const rel of [...restore, ...added]) {
-        const abs = path.join(item.dir, ...rel.split("/"));
-        if (fs.existsSync(abs)) copyFile(abs, path.join(save, ...rel.split("/")));
+        const abs = inside(item.dir, rel);
+        if (fs.existsSync(abs)) copyFile(abs, inside(save, rel));
       }
-      for (const rel of restore) copyFile(path.join(m.dir, ...rel.split("/")), path.join(item.dir, ...rel.split("/")));
+      for (const rel of restore) copyFile(inside(m.dir, rel), inside(item.dir, rel));
       for (const rel of added) {
-        const abs = path.join(item.dir, ...rel.split("/"));
+        const abs = inside(item.dir, rel);
         if (!fs.existsSync(abs)) continue;
         fs.unlinkSync(abs);
         removeEmptyDirs(path.dirname(abs), path.dirname(item.dir));
@@ -976,7 +1047,7 @@ function cmdDiff(args, opts, config) {
     const blobs = core.readBlobs(r.repo, wanted.map((f) => f.remote));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skill-update-diff-"));
     const put = (side, rel, buf) => {
-      const file = path.join(tmp, side, ...rel.split("/"));
+      const file = inside(path.join(tmp, side), rel);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, core.toEol(buf, false));
     };
@@ -1047,12 +1118,13 @@ function cmdAdd(args, opts, config) {
 
   const name = typeof opts.name === "string" ? opts.name : sub.split("/").pop() || parsed.url.replace(/\.git$/, "").split(/[/\\]/).pop();
   const id = [typeof opts.to === "string" ? opts.to : "", name].join("/").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
-  const dir = path.join(root.path, ...id.split("/"));
+  const dir = inside(root.path, id);
   if (fs.existsSync(dir)) throw new CliError("exists", { dir: slash(dir) });
 
   const extras = Object.fromEntries(Object.entries(core.licenseFiles(repo, head, sub)).filter(([rel]) => !tree.has(rel)));
   const files = new Map(tree);
   for (const [rel, up] of Object.entries(extras)) files.set(rel, core.listPaths(repo, head, [up]).get(up));
+  for (const rel of files.keys()) inside(dir, rel); // every path is checked before anything is written
   const blobs = core.readBlobs(repo, [...files.values()].map((e) => e.oid));
   const risks = assessRisks([...files].map(([rel, e]) => ({ rel, before: null, after: blobs.get(e.oid), mode: e.mode })));
   const dryRun = !!opts["dry-run"];
@@ -1070,7 +1142,7 @@ function cmdAdd(args, opts, config) {
   };
   if (!dryRun) {
     for (const [rel, e] of files) {
-      const abs = path.join(dir, ...rel.split("/"));
+      const abs = inside(dir, rel);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, blobs.get(e.oid));
       if (e.mode === "100755" && process.platform !== "win32") fs.chmodSync(abs, 0o755);
